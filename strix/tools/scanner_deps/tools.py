@@ -158,45 +158,90 @@ def _run_install(argv: list[str]) -> tuple[bool, str]:
     return True, " ".join(cmd)
 
 
-def install_tools(names: list[str] | None = None) -> dict[str, dict[str, object]]:
-    """Install missing scanner binaries. Returns a per-tool result map.
+def _to_upgrade(argv: list[str]) -> list[str]:
+    """Map an install command to its upgrade form for the same manager.
 
-    `names=None` installs all. Already-present tools are skipped. Each tool
-    tries its candidates in order until one whose manager is available
-    succeeds.
+    Registry argv follow a fixed shape, so the transform is per-manager:
+    brew/pipx `install`→`upgrade`, gem `install`→`update`, apt-get gets
+    `--only-upgrade`, and go `install …@latest` already fetches latest.
+    """
+    manager = argv[0]
+    if manager in {"brew", "pipx"}:
+        return [("upgrade" if a == "install" else a) for a in argv]
+    if manager == "gem":
+        return [("update" if a == "install" else a) for a in argv]
+    if manager == "apt-get":
+        return ["apt-get", "install", "--only-upgrade", *argv[2:]]
+    return argv  # go: `@latest` reinstall already upgrades
+
+
+def _refresh_nuclei_templates() -> tuple[bool, str]:
+    """Best-effort `nuclei -update-templates` so template CVEs stay current."""
+    if not shutil.which("nuclei"):
+        return False, "nuclei not installed"
+    return _run_install(["nuclei", "-update-templates"])
+
+
+def install_tools(
+    names: list[str] | None = None, *, upgrade: bool = False
+) -> dict[str, dict[str, object]]:
+    """Install missing scanner binaries, and optionally upgrade present ones.
+
+    `names=None` covers all scanners. Each tool tries its candidates in order
+    until one whose manager is available succeeds. With `upgrade=False` an
+    already-present tool is left alone (`already`); with `upgrade=True` it is
+    re-run through the manager's upgrade command (`upgraded`), and nuclei's
+    templates are refreshed.
     """
     managers = _available_managers()
     targets = [_BY_NAME[n] for n in names if n in _BY_NAME] if names else list(SCANNERS)
     results: dict[str, dict[str, object]] = {}
     for s in targets:
-        if shutil.which(s.binary):
+        present = shutil.which(s.binary) is not None
+        if present and not upgrade:
             results[s.name] = {"status": "already", "detail": shutil.which(s.binary)}
             continue
         usable = [(m, argv) for m, argv in s.candidates if m in managers]
         if not usable:
             wanted = sorted({m for m, _ in s.candidates})
-            results[s.name] = {
-                "status": "skipped",
-                "detail": f"no available installer; needs one of: {', '.join(wanted)}",
-            }
+            if present:
+                # Installed some other way; can't upgrade it, but it works.
+                results[s.name] = {"status": "already", "detail": shutil.which(s.binary)}
+            else:
+                results[s.name] = {
+                    "status": "skipped",
+                    "detail": f"no available installer; needs one of: {', '.join(wanted)}",
+                }
             continue
         errors = []
         for _manager, argv in usable:
-            logger.info("Installing %s via: %s", s.name, " ".join(argv))
-            ok, detail = _run_install(argv)
+            run_argv = _to_upgrade(argv) if present else argv
+            verb = "Upgrading" if present else "Installing"
+            logger.info("%s %s via: %s", verb, s.name, " ".join(run_argv))
+            ok, detail = _run_install(run_argv)
             if ok:
-                results[s.name] = {"status": "installed", "detail": detail}
+                results[s.name] = {
+                    "status": "upgraded" if present else "installed",
+                    "detail": detail,
+                }
                 break
             errors.append(detail)
         else:
             results[s.name] = {"status": "failed", "detail": " | ".join(errors)}
+
+    if upgrade and (names is None or "nuclei" in names):
+        ok, detail = _refresh_nuclei_templates()
+        results["nuclei-templates"] = {
+            "status": "upgraded" if ok else "skipped",
+            "detail": detail,
+        }
     return results
 
 
 def render_install_report(results: dict[str, dict[str, object]]) -> str:
     """Human-readable summary for the CLI."""
-    order = {"installed": 0, "already": 1, "skipped": 2, "failed": 3}
-    icon = {"installed": "✓", "already": "•", "skipped": "-", "failed": "✗"}
+    order = {"installed": 0, "upgraded": 0, "already": 1, "skipped": 2, "failed": 3}
+    icon = {"installed": "✓", "upgraded": "↑", "already": "•", "skipped": "-", "failed": "✗"}
     lines = ["Scanner tools:"]
 
     def _sort_key(kv: tuple[str, dict[str, object]]) -> tuple[int, str]:

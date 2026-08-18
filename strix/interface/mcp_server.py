@@ -398,16 +398,24 @@ def run_mcp(argv: list[str]) -> int:
     parser.add_argument(
         "--install-tools",
         action="store_true",
-        help="Install the external scanner binaries (nuclei, nmap, ffuf, gitleaks, "
-        "httpx, sqlmap, nikto, wpscan) via the host package manager, then exit.",
+        help="Install any missing external scanner binaries (nuclei, nmap, ffuf, "
+        "gitleaks, httpx, sqlmap, nikto, wpscan) via the host package manager, then exit.",
+    )
+    parser.add_argument(
+        "--update-tools",
+        action="store_true",
+        help="Install missing scanners AND upgrade already-installed ones to the "
+        "latest version (also refreshes nuclei templates), then exit.",
     )
     args = parser.parse_args(argv)
 
-    if args.install_tools:
+    if args.install_tools or args.update_tools:
         # Not stdout: stdout is the JSON-RPC channel. Write to stderr so this
-        # never corrupts an MCP session; this flag is the interactive path.
-        sys.stderr.write("Installing external scanner tools (this may prompt for sudo)…\n")
-        results = install_tools()
+        # never corrupts an MCP session; these flags are the interactive path.
+        upgrade = args.update_tools
+        verb = "Updating" if upgrade else "Installing"
+        sys.stderr.write(f"{verb} external scanner tools (this may prompt for sudo)…\n")
+        results = install_tools(upgrade=upgrade)
         sys.stderr.write(render_install_report(results) + "\n")
         failed = [n for n, r in results.items() if r["status"] == "failed"]
         return 1 if failed else 0

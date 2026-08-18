@@ -98,6 +98,53 @@ def test_missing_tools_reflects_status(monkeypatch: pytest.MonkeyPatch) -> None:
     assert sorted(sd.missing_tools()) == sorted(s.name for s in sd.SCANNERS)
 
 
+def test_to_upgrade_per_manager() -> None:
+    assert sd._to_upgrade(["brew", "install", "nmap"]) == ["brew", "upgrade", "nmap"]
+    assert sd._to_upgrade(["pipx", "install", "sqlmap"]) == ["pipx", "upgrade", "sqlmap"]
+    assert sd._to_upgrade(["gem", "install", "wpscan"]) == ["gem", "update", "wpscan"]
+    assert sd._to_upgrade(["apt-get", "install", "-y", "nmap"]) == [
+        "apt-get",
+        "install",
+        "--only-upgrade",
+        "-y",
+        "nmap",
+    ]
+    # go @latest already upgrades → unchanged
+    goc = ["go", "install", "github.com/ffuf/ffuf/v2@latest"]
+    assert sd._to_upgrade(goc) == goc
+
+
+def test_upgrade_runs_upgrade_form_for_present_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+    # nmap present; brew available → should run `brew upgrade nmap`, status upgraded.
+    monkeypatch.setattr(sd.shutil, "which", lambda b: "/bin/x" if b in {"nmap", "sudo"} else None)
+    monkeypatch.setattr(sd, "_available_managers", lambda: {"brew"})
+    ran: list[list[str]] = []
+
+    def _fake_run(argv: list[str]) -> tuple[bool, str]:
+        ran.append(argv)
+        return True, " ".join(argv)
+
+    monkeypatch.setattr(sd, "_run_install", _fake_run)
+    results = sd.install_tools(["nmap"], upgrade=True)
+    assert results["nmap"]["status"] == "upgraded"
+    assert ["brew", "upgrade", "nmap"] in ran
+
+
+def test_upgrade_refreshes_nuclei_templates(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sd.shutil, "which", lambda b: "/bin/x" if b == "nuclei" else None)
+    monkeypatch.setattr(sd, "_available_managers", lambda: {"brew"})
+    ran: list[list[str]] = []
+
+    def _fake_run(argv: list[str]) -> tuple[bool, str]:
+        ran.append(argv)
+        return True, " ".join(argv)
+
+    monkeypatch.setattr(sd, "_run_install", _fake_run)
+    results = sd.install_tools(["nuclei"], upgrade=True)
+    assert results["nuclei-templates"]["status"] == "upgraded"
+    assert ["nuclei", "-update-templates"] in ran
+
+
 def test_render_report_flags_failures() -> None:
     report = sd.render_install_report(
         {
