@@ -87,6 +87,7 @@ from strix.tools.todo.tools import (
     seed_todos,
     update_todo,
 )
+from strix.tools.validation.tools import hydrate_validations_from_disk, validate_finding
 
 
 if TYPE_CHECKING:
@@ -127,10 +128,13 @@ escalation), authentication/session flaws, business-logic abuse, and multi-step 
 chains, not just single-request bugs. Treat each finding as a pivot: ask what it \
 unlocks next and follow it to maximum impact.
 
-4. PROVE BEFORE FILING — only call create_vulnerability_report with a working, \
-reproduced PoC and concrete request/response or code-trace evidence. Use \
-create_dependency_report for known-CVE dependencies. Track scope, hypotheses, \
-and progress with the notes and todo tools.
+4. PROVE BEFORE FILING — before create_vulnerability_report, call \
+validate_finding to re-run the PoC and prove the claimed impact (for a data \
+leak it must return the actual leaked data as proof); pass the resulting \
+validation_id into create_vulnerability_report along with concrete \
+request/response or code-trace evidence. Use create_dependency_report for \
+known-CVE dependencies. Track scope, hypotheses, and progress with the notes \
+and todo tools.
 
 5. DON'T DECLARE DONE — the audit is complete only when the coverage checklist \
 in list_todos is fully worked through (or empty) and every filed finding is \
@@ -165,6 +169,7 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     mark_matrix_cell,
     import_openapi,
     http_replay,
+    validate_finding,
     diff_response,
     store_credential,
     list_credentials,
@@ -232,6 +237,7 @@ def bootstrap_mcp_run(run_name: str = DEFAULT_RUN_NAME) -> ReportState:
     hydrate_attack_surface_from_disk(state_dir)
     hydrate_credentials_from_disk(state_dir)
     hydrate_chains_from_disk(state_dir)
+    hydrate_validations_from_disk(state_dir)
     _seed_coverage_todos()
     state.save_run_data()
     return state

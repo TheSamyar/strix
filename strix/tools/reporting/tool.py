@@ -313,7 +313,7 @@ _REQUIRED_FIELDS = {
 _VALID_FIX_EFFORT = frozenset({"trivial", "low", "medium", "high"})
 
 
-async def _do_create(  # noqa: PLR0912
+async def _do_create(  # noqa: PLR0912, PLR0915
     *,
     title: str,
     description: str,
@@ -334,6 +334,7 @@ async def _do_create(  # noqa: PLR0912
     code_locations: list[dict[str, Any]] | None,
     verification: str = "",
     fix_pr_body: str | None = None,
+    validation_id: str | None = None,
     agent_id: str | None = None,
     agent_name: str | None = None,
 ) -> dict[str, Any]:
@@ -391,6 +392,23 @@ async def _do_create(  # noqa: PLR0912
         cwe_err = _validate_cwe(cwe)
         if cwe_err:
             errors.append(cwe_err)
+
+    # Auto-validation gate: if a validation_id is given it must reference a
+    # passing validate_finding record; its proof rides along onto the report.
+    validated = False
+    validation_proof: str | None = None
+    if validation_id:
+        from strix.tools.validation.tools import get_validation
+
+        record = get_validation(validation_id)
+        if record is None or not record.get("validated"):
+            errors.append(
+                f"validation_id {validation_id} not found or did not pass; "
+                "run validate_finding and pass a passing id"
+            )
+        else:
+            validated = True
+            validation_proof = record.get("proof_excerpt")
 
     if errors:
         return {"success": False, "error": "Validation failed", "errors": errors}
@@ -467,6 +485,8 @@ async def _do_create(  # noqa: PLR0912
             cwe=cwe,
             code_locations=parsed_locations,
             fix_pr_body=fix_pr_body,
+            validated=validated,
+            validation_proof=validation_proof,
             agent_id=agent_id if isinstance(agent_id, str) else None,
             agent_name=agent_name if isinstance(agent_name, str) else None,
         )
@@ -527,6 +547,7 @@ async def create_vulnerability_report(
     cwe: str | None = None,
     code_locations: list[dict[str, Any]] | None = None,
     fix_pr_body: str | None = None,
+    validation_id: str | None = None,
 ) -> str:
     """File a vulnerability report — one report per fully-verified finding.
 
@@ -806,6 +827,11 @@ async def create_vulnerability_report(
             fix (summary + rationale). Prose/markdown only — the code
             change itself belongs in ``code_locations``. Omit for
             black-box findings.
+        validation_id: Optional id from a passing ``validate_finding``
+            run. When provided it must reference a validation whose
+            ``validated`` is true; the report is then marked validated and
+            its ``proof_excerpt`` is attached. A missing or failed id
+            rejects the report.
 
     Example (abbreviated — mirror this structure)::
 
@@ -865,6 +891,7 @@ async def create_vulnerability_report(
         code_locations=code_locations,
         verification=verification,
         fix_pr_body=fix_pr_body,
+        validation_id=validation_id,
         agent_id=agent_id,
         agent_name=agent_name,
     )

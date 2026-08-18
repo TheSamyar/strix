@@ -247,6 +247,8 @@ class ReportState:
         cwe: str | None = None,
         code_locations: list[dict[str, Any]] | None = None,
         fix_pr_body: str | None = None,
+        validated: bool = False,
+        validation_proof: str | None = None,
         finding_class: str | None = None,
         dependency_metadata: dict[str, str] | None = None,
         agent_id: str | None = None,
@@ -299,6 +301,9 @@ class ReportState:
             report["code_locations"] = code_locations
         if fix_pr_body:
             report["fix_pr_body"] = fix_pr_body.strip()
+        report["validated"] = bool(validated)
+        if validation_proof:
+            report["validation_proof"] = validation_proof.strip()
         report["finding_class"] = (finding_class or "dynamic").strip().lower()
         if dependency_metadata:
             report["dependency_metadata"] = dependency_metadata
