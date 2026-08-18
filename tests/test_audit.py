@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json  # noqa: F401
+import json
 import sys
 from pathlib import Path
 
@@ -11,9 +11,12 @@ from strix.audit import (
     codex_argv,
     cursor_argv,
     jobs_for_mode,
+    load_worker_reports,
     mcp_argv,
+    remint_ids,
     resolve_agent,
     write_mcp_config_json,
+    write_parent_reports,
 )
 
 
@@ -102,3 +105,39 @@ def test_mcp_config_json_schema() -> None:
     assert server["type"] == "stdio"
     assert server["command"] == "/usr/bin/python"
     assert server["args"][0] == "-c"
+
+
+def _finding(vid: str, title: str) -> dict[str, object]:
+    return {
+        "id": vid,
+        "title": title,
+        "severity": "high",
+        "timestamp": "2026-08-18 00:00:00 UTC",
+    }
+
+
+def test_remint_keeps_colliding_worker_ids(tmp_path: Path) -> None:
+    parent = tmp_path / "run"
+    for job, title in (("recon", "XSS"), ("auth", "JWT none")):
+        d = parent / "workers" / job
+        d.mkdir(parents=True)
+        (d / "vulnerabilities.json").write_text(
+            json.dumps([_finding("vuln-0001", title)]), encoding="utf-8"
+        )
+    raw = load_worker_reports(parent, ["recon", "auth"])
+    minted = remint_ids(raw)
+    assert [r["id"] for r in minted] == ["vuln-0001", "vuln-0002"]
+    assert [r["title"] for r in minted] == ["XSS", "JWT none"]
+    write_parent_reports(parent, minted, jobs_summary="recon ok\nauth ok")
+    saved = json.loads((parent / "vulnerabilities.json").read_text(encoding="utf-8"))
+    assert [r["id"] for r in saved] == ["vuln-0001", "vuln-0002"]
+    assert (parent / "vulnerabilities" / "vuln-0002.md").is_file()
+    assert (parent / "findings.sarif").is_file()
+    assert "JWT none" in (parent / "penetration_test_report.md").read_text(encoding="utf-8")
+
+
+def test_load_skips_missing_and_corrupt(tmp_path: Path) -> None:
+    parent = tmp_path / "run"
+    (parent / "workers" / "recon").mkdir(parents=True)
+    (parent / "workers" / "recon" / "vulnerabilities.json").write_text("{", encoding="utf-8")
+    assert load_worker_reports(parent, ["recon", "auth"]) == []

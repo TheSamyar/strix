@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from strix.report.sarif import write_sarif
+from strix.report.writer import write_executive_report, write_vulnerabilities
+
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 SCAN_MODES = ("quick", "standard", "deep")
@@ -205,3 +211,51 @@ def codex_argv(
         f"mcp_servers.strix_audit.cwd={json.dumps(original_cwd)}",
         prompt,
     ]
+
+
+def load_worker_reports(parent: Path, job_ids: Sequence[str]) -> list[dict[str, Any]]:
+    reports: list[dict[str, Any]] = []
+    for job_id in job_ids:
+        path = parent / "workers" / job_id / "vulnerabilities.json"
+        if not path.is_file():
+            logger.warning("audit merge: missing %s", path)
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            logger.warning("audit merge: corrupt %s", path)
+            continue
+        if not isinstance(payload, list):
+            logger.warning("audit merge: not a list %s", path)
+            continue
+        reports.extend(item for item in payload if isinstance(item, dict))
+    return reports
+
+
+def remint_ids(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    minted: list[dict[str, Any]] = []
+    for index, report in enumerate(reports, start=1):
+        updated = dict(report)
+        updated["id"] = f"vuln-{index:04d}"
+        minted.append(updated)
+    return minted
+
+
+def write_parent_reports(
+    parent: Path,
+    reports: list[dict[str, Any]],
+    *,
+    jobs_summary: str,
+) -> None:
+    parent.mkdir(parents=True, exist_ok=True)
+    write_vulnerabilities(parent, reports, saved_vuln_ids=set())
+    write_sarif(parent, reports)
+    lines = ["## Jobs\n", jobs_summary, "\n## Findings\n"]
+    if not reports:
+        lines.append("No validated findings.\n")
+    lines.extend(
+        f"- `{report.get('id')}` {str(report.get('severity', '')).upper()} "
+        f"{report.get('title', '')}\n"
+        for report in reports
+    )
+    write_executive_report(parent, "".join(lines))
