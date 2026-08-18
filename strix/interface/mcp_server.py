@@ -69,6 +69,12 @@ from strix.tools.reporting.tool import (
     list_reports,
 )
 from strix.tools.run_scanner.tools import run_scanner
+from strix.tools.scanner_deps.tools import (
+    check_tools,
+    install_tools,
+    missing_tools,
+    render_install_report,
+)
 from strix.tools.todo.tools import (
     create_todo,
     delete_todo,
@@ -173,6 +179,7 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     nuclei_scan,
     run_scanner,
     cve_lookup,
+    check_tools,
 )
 
 _LIST_SKILLS_SCHEMA: dict[str, Any] = {
@@ -388,7 +395,29 @@ def run_mcp(argv: list[str]) -> int:
         default=DEFAULT_RUN_NAME,
         help=f"Run directory under ./strix_runs (default: {DEFAULT_RUN_NAME}).",
     )
+    parser.add_argument(
+        "--install-tools",
+        action="store_true",
+        help="Install the external scanner binaries (nuclei, nmap, ffuf, gitleaks, "
+        "httpx, sqlmap, nikto, wpscan) via the host package manager, then exit.",
+    )
     args = parser.parse_args(argv)
+
+    if args.install_tools:
+        # Not stdout: stdout is the JSON-RPC channel. Write to stderr so this
+        # never corrupts an MCP session; this flag is the interactive path.
+        sys.stderr.write("Installing external scanner tools (this may prompt for sudo)…\n")
+        results = install_tools()
+        sys.stderr.write(render_install_report(results) + "\n")
+        failed = [n for n, r in results.items() if r["status"] == "failed"]
+        return 1 if failed else 0
+
     bootstrap_mcp_run(args.run_name)
+    absent = missing_tools()
+    if absent:
+        logger.warning(
+            "Scanner tools not installed: %s. Run `strix mcp --install-tools` to add them.",
+            ", ".join(absent),
+        )
     logger.info("MCP server ready (run=%s)", args.run_name)
     return serve_stdio()

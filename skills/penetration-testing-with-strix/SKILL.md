@@ -13,7 +13,10 @@ metadata:
 
 ```bash
 uv run --directory "/Users/samyar/Github Local/strix" strix mcp   # stdio MCP; already wired in this repo's .cursor/mcp.json
+uv run --directory "/Users/samyar/Github Local/strix" strix mcp --install-tools   # one-time: install scanner binaries
 ```
+
+**Scanner binaries** (`nuclei_scan`, `run_scanner`, `gitleaks_scan`, … need them): run `strix mcp --install-tools` once — it installs `nuclei`, `nmap`, `ffuf`, `gitleaks`, `httpx`, `sqlmap`, `nikto`, `wpscan` via the host package manager (brew/apt/go/pipx/gem; apt/gem may prompt for sudo). The dependency/lookup tools (`osv_scan`, `cve_lookup`, `npm_audit`, `git_recon`) need no extra install. At runtime, call `check_tools` to see what's available before invoking a scanner; each scanner also degrades to a clear "not installed" message.
 
 1. `list_skills` — see packs (`xss`, `sql_injection`, `idor`, …).
 2. `load_skill` with the packs you need (max 5).
