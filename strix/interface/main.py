@@ -431,6 +431,11 @@ def main() -> None:
 
         sys.exit(run_auth(sys.argv[2:]))
 
+    if len(sys.argv) > 1 and sys.argv[1] == "audit":
+        from strix.interface.audit import run_audit
+
+        sys.exit(run_audit(sys.argv[2:]))
+
     # `strix mcp` is a stdio MCP server for Cursor/Claude/Codex. No Docker,
     # no LLM key — those agents are the brain.
     if len(sys.argv) > 1 and sys.argv[1] == "mcp":

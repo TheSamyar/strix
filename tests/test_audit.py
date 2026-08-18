@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import importlib
 import json
+import os
+import stat
 import sys
+from argparse import Namespace
 from pathlib import Path
 
 import pytest
@@ -21,10 +25,16 @@ from strix.audit import (
     plan_isolation,
     remint_ids,
     resolve_agent,
+    run_jobs,
+    targets_info_for_audit,
     worker_prompt,
     write_mcp_config_json,
     write_parent_reports,
 )
+from strix.interface.audit import parse_audit_args, run_audit
+
+
+main_mod = importlib.import_module("strix.interface.main")
 
 
 def test_quick_has_four_jobs() -> None:
@@ -208,3 +218,110 @@ def test_first_local_path(tmp_path: Path) -> None:
         {"type": "local_code", "details": {"target_path": str(app)}, "original": "./app"},
     ]
     assert first_local_path(info) == app
+
+
+def test_parse_audit_help() -> None:
+    with pytest.raises(SystemExit) as exc:
+        parse_audit_args(["--help"])
+    assert exc.value.code == 0
+
+
+def test_parse_requires_target() -> None:
+    with pytest.raises(SystemExit) as exc:
+        parse_audit_args(["--agent", "claude"])
+    assert exc.value.code == 2
+
+
+def test_parse_defaults_quick() -> None:
+    args = parse_audit_args(["-t", "./"])
+    assert args.scan_mode == "quick"
+    assert args.max_workers == 3
+    assert args.timeout == 3600
+
+
+def test_targets_info_keeps_localhost() -> None:
+    ns = Namespace(target=["http://127.0.0.1:8080"], target_list=None)
+    info = targets_info_for_audit(ns)
+    assert "127.0.0.1" in info[0]["details"]["target_url"]
+    assert "host.docker.internal" not in info[0]["details"]["target_url"]
+
+
+def test_run_name_rejects_dotdot() -> None:
+    with pytest.raises(SystemExit):
+        parse_audit_args(["-t", "./", "--run-name", "../escape"])
+
+
+def test_main_audit_help_never_parses_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(main_mod.sys, "argv", ["strix", "audit", "--help"])
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise AssertionError("scan path must not run")
+
+    monkeypatch.setattr(main_mod, "parse_arguments", boom)
+    with pytest.raises(SystemExit) as exc:
+        main_mod.main()
+    assert exc.value.code == 0
+
+
+def test_run_audit_fake_claude_exit_zero(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "claude"
+    fake.write_text("#!/bin/sh\necho AUDIT_JOB_DONE\nexit 0\n", encoding="utf-8")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    (tmp_path / "app").mkdir()
+    code = run_audit(["-t", str(tmp_path / "app"), "--agent", "claude", "--run-name", "t1"])
+    assert code == 0
+    recorded = (tmp_path / "strix_runs" / "t1" / "run.json").is_file()
+    assert recorded
+
+
+def test_run_audit_missing_agent_exits_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    (tmp_path / "empty").mkdir()
+    (tmp_path / "app").mkdir()
+    assert run_audit(["-t", str(tmp_path / "app"), "--agent", "claude"]) == 1
+
+
+def test_run_jobs_cursor_restores_workspace_mcp(
+    tmp_path: Path,
+) -> None:
+    app = tmp_path / "app"
+    cursor_dir = app / ".cursor"
+    cursor_dir.mkdir(parents=True)
+    workspace_mcp = cursor_dir / "mcp.json"
+    original = '{"mcpServers":{"existing":{}}}'
+    workspace_mcp.write_text(original, encoding="utf-8")
+    fake = tmp_path / "cursor-agent"
+    fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    parent = tmp_path / "strix_runs" / "cursor-restore"
+    job = AuditJob("recon", "Recon specialist", ("asset_discovery",), "Map it.")
+
+    results, findings = run_jobs(
+        [job],
+        agent="cursor",
+        binary=str(fake),
+        targets_info=[
+            {
+                "type": "local_code",
+                "details": {"target_path": str(app)},
+                "original": str(app),
+            }
+        ],
+        original_cwd=tmp_path,
+        parent=parent,
+        instruction="",
+        max_workers=1,
+        timeout=10,
+    )
+
+    assert results == [JobResult("recon", 0, timed_out=False)]
+    assert findings == 0
+    assert workspace_mcp.read_text(encoding="utf-8") == original
+    assert not (cursor_dir / ".mcp.json.strix-audit.bak").exists()

@@ -2,13 +2,26 @@
 
 from __future__ import annotations
 
+import concurrent.futures
+import contextlib
 import json
 import logging
+import os
+import shutil
+import signal
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from strix.interface.scan_setup import _resolve_api_spec
+from strix.interface.utils import (
+    assign_workspace_subdirs,
+    dedupe_local_targets,
+    infer_target_type,
+    read_target_list_file,
+)
 from strix.report.sarif import write_sarif
 from strix.report.writer import write_executive_report, write_vulnerabilities
 
@@ -158,8 +171,13 @@ def resolve_agent(
     raise FileNotFoundError(" ".join(AGENT_HINTS.values()))
 
 
-def claude_argv(binary: str, prompt: str, mcp_config: Path) -> list[str]:
-    return [
+def claude_argv(
+    binary: str,
+    prompt: str,
+    mcp_config: Path,
+    worktree_name: str | None = None,
+) -> list[str]:
+    argv = [
         binary,
         "-p",
         "--dangerously-skip-permissions",
@@ -168,8 +186,10 @@ def claude_argv(binary: str, prompt: str, mcp_config: Path) -> list[str]:
         str(mcp_config),
         "--output-format",
         "json",
-        prompt,
     ]
+    if worktree_name:
+        argv.extend(["-w", worktree_name])
+    return [*argv, prompt]
 
 
 def cursor_argv(binary: str, prompt: str, workspace: Path) -> list[str]:
@@ -336,3 +356,177 @@ def worker_prompt(
         f"{extra}"
         "When finished, print AUDIT_JOB_DONE and exit 0.\n"
     )
+
+
+def targets_info_for_audit(args: Any) -> list[dict[str, Any]]:
+    targets_info: list[dict[str, Any]] = []
+    targets = list(args.target or [])
+    for target_list_path in args.target_list or []:
+        targets.extend(read_target_list_file(target_list_path))
+
+    for target in targets:
+        try:
+            target_type, target_dict = infer_target_type(target)
+        except ValueError as exc:
+            raise ValueError(f"Invalid target '{target}': {exc}") from None
+
+        display_target = (
+            target_dict.get("target_path", target) if target_type == "local_code" else target
+        )
+        if target_type == "api_spec":
+            _resolve_api_spec(target, target_dict)
+
+        targets_info.append(
+            {"type": target_type, "details": target_dict, "original": display_target}
+        )
+
+    targets_info = dedupe_local_targets(targets_info)
+    assign_workspace_subdirs(targets_info)
+    return targets_info
+
+
+def is_git_repo(path: Path) -> bool:
+    return (path / ".git").exists()
+
+
+_live_procs: list[subprocess.Popen[bytes]] = []
+
+
+def _kill_live_processes() -> None:
+    for proc in _live_procs.copy():
+        if proc.poll() is None:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+
+
+def run_jobs(  # noqa: PLR0915
+    jobs: Sequence[AuditJob],
+    *,
+    agent: str,
+    binary: str,
+    targets_info: list[dict[str, Any]],
+    original_cwd: Path,
+    parent: Path,
+    instruction: str,
+    max_workers: int,
+    timeout: int,
+) -> tuple[list[JobResult], int]:
+    local = first_local_path(targets_info)
+    git = bool(local and is_git_repo(local))
+    tmp = parent / ".worktrees"
+    tmp.mkdir(parents=True, exist_ok=True)
+    added_worktrees: list[Path] = []
+    plans = {
+        job.id: plan_isolation(
+            agent,
+            job.id,
+            local,
+            original_cwd,
+            tmp,
+            is_git=git,
+        )
+        for job in jobs
+    }
+    worker_run_base = parent.relative_to(original_cwd / "strix_runs").as_posix()
+
+    def run_job(job: AuditJob) -> JobResult:
+        plan = plans[job.id]
+        if plan.worktree:
+            subprocess.run(  # noqa: S603
+                codex_worktree_argv(plan.worktree),
+                cwd=local or original_cwd,
+                check=True,
+            )
+            added_worktrees.append(plan.worktree)
+
+        worker_dir = parent / "workers" / job.id
+        worker_dir.mkdir(parents=True, exist_ok=True)
+        worker_run_name = f"{worker_run_base}/workers/{job.id}"
+        mcp = mcp_argv(str(original_cwd), worker_run_name)
+        mcp_config = write_mcp_config_json(sys.executable, mcp[1:])
+        mcp_path = worker_dir / "mcp.json"
+        mcp_path.write_text(json.dumps(mcp_config, indent=2), encoding="utf-8")
+
+        prompt = worker_prompt(job, targets_info, instruction)
+        cursor_path = plan.worker_cwd / ".cursor" / "mcp.json"
+        cursor_backup = cursor_path.with_name(".mcp.json.strix-audit.bak")
+        restore_cursor = False
+        if agent == "claude":
+            argv = claude_argv(
+                binary,
+                prompt,
+                mcp_path,
+                worktree_name=f"strix-audit-{job.id}" if git else None,
+            )
+        elif agent == "cursor":
+            cursor_path.parent.mkdir(parents=True, exist_ok=True)
+            if cursor_path.exists():
+                shutil.copy2(cursor_path, cursor_backup)
+                restore_cursor = True
+            cursor_path.write_text(json.dumps(mcp_config, indent=2), encoding="utf-8")
+            argv = cursor_argv(binary, prompt, plan.worker_cwd)
+        else:
+            argv = codex_argv(
+                binary,
+                prompt,
+                plan.worker_cwd,
+                str(original_cwd),
+                worker_run_name,
+            )
+
+        proc: subprocess.Popen[bytes] | None = None
+        try:
+            proc = subprocess.Popen(  # noqa: S603
+                argv,
+                cwd=plan.worker_cwd,
+                start_new_session=True,
+            )
+            _live_procs.append(proc)
+            try:
+                proc.communicate(timeout=timeout)
+                return JobResult(job.id, proc.returncode, timed_out=False)
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.communicate()
+                return JobResult(job.id, 1, timed_out=True)
+        finally:
+            if proc in _live_procs:
+                _live_procs.remove(proc)
+            if agent == "cursor":
+                if restore_cursor:
+                    shutil.move(cursor_backup, cursor_path)
+                else:
+                    cursor_path.unlink(missing_ok=True)
+
+    try:
+        if any(plan.sequential for plan in plans.values()):
+            results = [run_job(job) for job in jobs]
+        else:
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
+            try:
+                futures = [executor.submit(run_job, job) for job in jobs]
+                results = [future.result() for future in futures]
+            except KeyboardInterrupt:
+                _kill_live_processes()
+                raise
+            finally:
+                executor.shutdown(wait=True, cancel_futures=True)
+
+        reports = remint_ids(load_worker_reports(parent, [job.id for job in jobs]))
+        jobs_summary = "\n".join(
+            f"{result.job_id}: exit {result.exit_code}"
+            + (" (timed out)" if result.timed_out else "")
+            for result in results
+        )
+        write_parent_reports(parent, reports, jobs_summary=jobs_summary)
+        return results, len(reports)
+    except KeyboardInterrupt:
+        _kill_live_processes()
+        raise
+    finally:
+        for path in added_worktrees:
+            subprocess.run(  # noqa: S603
+                ["git", "worktree", "remove", "--force", str(path)],  # noqa: S607
+                cwd=local or original_cwd,
+                check=False,
+            )
