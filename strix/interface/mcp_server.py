@@ -43,7 +43,10 @@ from strix.tools.credentials.tools import (
     list_credentials,
     store_credential,
 )
+from strix.tools.cve_lookup.tools import cve_lookup
 from strix.tools.diff_response.tools import diff_response
+from strix.tools.git_recon.tools import git_recon
+from strix.tools.gitleaks_scan.tools import gitleaks_scan
 from strix.tools.http_replay.tools import http_replay
 from strix.tools.load_skill.tool import load_skill
 from strix.tools.notes.tools import (
@@ -54,7 +57,10 @@ from strix.tools.notes.tools import (
     list_notes,
     update_note,
 )
+from strix.tools.npm_audit.tools import npm_audit
+from strix.tools.nuclei_scan.tools import nuclei_scan
 from strix.tools.openapi_import.tools import import_openapi
+from strix.tools.osv_scan.tools import osv_scan
 from strix.tools.reporting.tool import (
     create_dependency_report,
     create_vulnerability_report,
@@ -62,6 +68,7 @@ from strix.tools.reporting.tool import (
     get_report,
     list_reports,
 )
+from strix.tools.run_scanner.tools import run_scanner
 from strix.tools.todo.tools import (
     create_todo,
     delete_todo,
@@ -159,6 +166,13 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     list_chains,
     add_chain_step,
     delete_chain,
+    osv_scan,
+    npm_audit,
+    gitleaks_scan,
+    git_recon,
+    nuclei_scan,
+    run_scanner,
+    cve_lookup,
 )
 
 _LIST_SKILLS_SCHEMA: dict[str, Any] = {
