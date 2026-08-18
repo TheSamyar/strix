@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import contextlib
 import importlib
 import json
 import os
+import signal
 import stat
 import sys
+import time
 from argparse import Namespace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+
+if TYPE_CHECKING:
+    import subprocess
 
 from strix.audit import (
     AuditJob,
@@ -177,6 +185,14 @@ def test_isolation_claude_has_no_diy_worktree(tmp_path: Path) -> None:
     assert plan.sequential is False
 
 
+def test_isolation_cursor_git_is_sequential(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    plan = plan_isolation("cursor", "recon", src, tmp_path, tmp_path / "wt", is_git=True)
+    assert plan.worktree is None
+    assert plan.worker_cwd == src
+    assert plan.sequential is True
+
+
 def test_isolation_nongit_is_sequential(tmp_path: Path) -> None:
     src = tmp_path / "src"
     plan = plan_isolation("claude", "recon", src, tmp_path, tmp_path / "wt", is_git=False)
@@ -184,9 +200,9 @@ def test_isolation_nongit_is_sequential(tmp_path: Path) -> None:
     assert plan.worktree is None
 
 
-def test_isolation_url_only_parallel(tmp_path: Path) -> None:
+def test_isolation_cursor_url_only_is_sequential(tmp_path: Path) -> None:
     plan = plan_isolation("cursor", "auth", None, tmp_path, tmp_path / "wt", is_git=False)
-    assert plan.sequential is False
+    assert plan.sequential is True
     assert plan.worker_cwd == tmp_path
 
 
@@ -292,19 +308,27 @@ def test_run_jobs_cursor_restores_workspace_mcp(
     tmp_path: Path,
 ) -> None:
     app = tmp_path / "app"
+    (app / ".git").mkdir(parents=True)
     cursor_dir = app / ".cursor"
     cursor_dir.mkdir(parents=True)
     workspace_mcp = cursor_dir / "mcp.json"
     original = '{"mcpServers":{"existing":{}}}'
     workspace_mcp.write_text(original, encoding="utf-8")
     fake = tmp_path / "cursor-agent"
-    fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    active = tmp_path / "cursor-active"
+    fake.write_text(
+        f"#!/bin/sh\nmkdir {active!s} || exit 23\nsleep 0.1\nrmdir {active!s}\n",
+        encoding="utf-8",
+    )
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
     parent = tmp_path / "strix_runs" / "cursor-restore"
-    job = AuditJob("recon", "Recon specialist", ("asset_discovery",), "Map it.")
+    jobs = [
+        AuditJob("recon", "Recon specialist", ("asset_discovery",), "Map it."),
+        AuditJob("auth", "Auth specialist", ("csrf",), "Test it."),
+    ]
 
     results, findings = run_jobs(
-        [job],
+        jobs,
         agent="cursor",
         binary=str(fake),
         targets_info=[
@@ -317,11 +341,64 @@ def test_run_jobs_cursor_restores_workspace_mcp(
         original_cwd=tmp_path,
         parent=parent,
         instruction="",
-        max_workers=1,
+        max_workers=2,
         timeout=10,
     )
 
-    assert results == [JobResult("recon", 0, timed_out=False)]
+    assert results == [
+        JobResult("recon", 0, timed_out=False),
+        JobResult("auth", 0, timed_out=False),
+    ]
     assert findings == 0
     assert workspace_mcp.read_text(encoding="utf-8") == original
     assert not (cursor_dir / ".mcp.json.strix-audit.bak").exists()
+
+
+def test_run_jobs_kills_sequential_worker_on_keyboard_interrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = tmp_path / "app"
+    app.mkdir()
+    pid_path = tmp_path / "worker.pid"
+    fake = tmp_path / "claude"
+    fake.write_text(
+        f"#!/bin/sh\necho $$ > {pid_path!s}\nexec sleep 60\n",
+        encoding="utf-8",
+    )
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+
+    def interrupt_communicate(self: subprocess.Popen[bytes], timeout: int | None = None) -> None:
+        del self, timeout
+        deadline = time.monotonic() + 2
+        while not pid_path.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("subprocess.Popen.communicate", interrupt_communicate)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            run_jobs(
+                [AuditJob("recon", "Recon specialist", ("asset_discovery",), "Map it.")],
+                agent="claude",
+                binary=str(fake),
+                targets_info=[
+                    {
+                        "type": "local_code",
+                        "details": {"target_path": str(app)},
+                        "original": str(app),
+                    }
+                ],
+                original_cwd=tmp_path,
+                parent=tmp_path / "strix_runs" / "interrupt",
+                instruction="",
+                max_workers=1,
+                timeout=10,
+            )
+        pid = int(pid_path.read_text(encoding="utf-8"))
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+    finally:
+        if pid_path.exists():
+            pid = int(pid_path.read_text(encoding="utf-8"))
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(pid, signal.SIGKILL)

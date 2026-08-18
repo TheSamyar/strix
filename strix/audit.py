@@ -313,6 +313,12 @@ def plan_isolation(
     *,
     is_git: bool,
 ) -> IsolationPlan:
+    if agent == "cursor":
+        return IsolationPlan(
+            sequential=True,
+            worker_cwd=local_path or original_cwd,
+            worktree=None,
+        )
     if local_path is None:
         return IsolationPlan(sequential=False, worker_cwd=original_cwd, worktree=None)
     if not is_git:
@@ -395,7 +401,7 @@ _live_procs: list[subprocess.Popen[bytes]] = []
 def _kill_live_processes() -> None:
     for proc in _live_procs.copy():
         if proc.poll() is None:
-            with contextlib.suppress(ProcessLookupError):
+            with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(proc.pid, signal.SIGKILL)
 
 
@@ -486,10 +492,15 @@ def run_jobs(  # noqa: PLR0915
                 proc.communicate(timeout=timeout)
                 return JobResult(job.id, proc.returncode, timed_out=False)
             except subprocess.TimeoutExpired:
-                os.killpg(proc.pid, signal.SIGKILL)
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(proc.pid, signal.SIGKILL)
                 proc.communicate()
                 return JobResult(job.id, 1, timed_out=True)
         finally:
+            if proc is not None and proc.poll() is None:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
             if proc in _live_procs:
                 _live_procs.remove(proc)
             if agent == "cursor":
