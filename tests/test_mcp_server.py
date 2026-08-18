@@ -176,3 +176,30 @@ def test_stdio_writes_newline_json(monkeypatch: pytest.MonkeyPatch) -> None:
     assert buf.getvalue().startswith(b'{"jsonrpc":')
     assert buf.getvalue().endswith(b"\n")
     assert b"Content-Length" not in buf.getvalue()
+
+
+def test_no_seed_skips_coverage_todos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    report_state_mod._global_report_state = None
+    from strix.tools.todo.tools import _get_agent_todos
+
+    bootstrap_mcp_run("no-seed", seed_coverage=False)
+    todos = _get_agent_todos("mcp")
+    assert todos == {}
+    instructions = handle_message({"jsonrpc": "2.0", "id": 1, "method": "initialize"})["result"][
+        "instructions"
+    ]
+    assert "coverage checklist" not in instructions
+    assert "specialist" in instructions.lower()
+    report_state_mod._global_report_state = None
+
+
+def test_seed_still_creates_coverage_todos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    report_state_mod._global_report_state = None
+    from strix.tools.todo.tools import _get_agent_todos
+
+    bootstrap_mcp_run("seeded")
+    titles = [t["title"] for t in _get_agent_todos("mcp").values()]
+    assert any("[coverage]" in title for title in titles)
+    report_state_mod._global_report_state = None
