@@ -6,6 +6,7 @@ import json
 import logging
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from strix.report.sarif import write_sarif
@@ -14,7 +15,6 @@ from strix.report.writer import write_executive_report, write_vulnerabilities
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
-    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -259,3 +259,80 @@ def write_parent_reports(
         for report in reports
     )
     write_executive_report(parent, "".join(lines))
+
+
+@dataclass(frozen=True)
+class IsolationPlan:
+    sequential: bool
+    worker_cwd: Path
+    worktree: Path | None
+
+
+@dataclass(frozen=True)
+class JobResult:
+    job_id: str
+    exit_code: int
+    timed_out: bool
+
+
+def first_local_path(targets_info: list[dict[str, Any]]) -> Path | None:
+    for item in targets_info:
+        if item.get("type") == "local_code":
+            raw = item.get("details", {}).get("target_path")
+            if raw:
+                return Path(raw)
+    return None
+
+
+def plan_isolation(
+    agent: str,
+    job_id: str,
+    local_path: Path | None,
+    original_cwd: Path,
+    tmp: Path,
+    *,
+    is_git: bool,
+) -> IsolationPlan:
+    if local_path is None:
+        return IsolationPlan(sequential=False, worker_cwd=original_cwd, worktree=None)
+    if not is_git:
+        return IsolationPlan(sequential=True, worker_cwd=local_path, worktree=None)
+    if agent == "codex":
+        tree = tmp / job_id
+        return IsolationPlan(sequential=False, worker_cwd=tree, worktree=tree)
+    return IsolationPlan(sequential=False, worker_cwd=local_path, worktree=None)
+
+
+def codex_worktree_argv(path: Path) -> list[str]:
+    return ["git", "worktree", "add", "--detach", str(path), "HEAD"]
+
+
+def audit_exit_code(results: Sequence[JobResult], finding_count: int) -> int:
+    if finding_count > 0:
+        return 2
+    if results and all(item.exit_code != 0 for item in results):
+        return 1
+    return 0
+
+
+def worker_prompt(
+    job: AuditJob,
+    targets_info: list[dict[str, Any]],
+    instruction: str,
+) -> str:
+    target_lines = "\n".join(
+        f"- {item.get('original')} ({item.get('type')})" for item in targets_info
+    )
+    skills = ", ".join(job.skills)
+    extra = f"\nAdditional instruction:\n{instruction}\n" if instruction else ""
+    return (
+        f"You are specialist {job.title} for this Strix audit.\n"
+        f"Targets:\n{target_lines}\n"
+        f"load_skill each of: {skills}\n"
+        f"{job.task}\n"
+        "File only validated findings with create_vulnerability_report.\n"
+        "Coverage todos are not seeded. Do not try to cover every vuln class.\n"
+        "Do not spawn sub-agents / Task tools / extra CLI agents.\n"
+        f"{extra}"
+        "When finished, print AUDIT_JOB_DONE and exit 0.\n"
+    )

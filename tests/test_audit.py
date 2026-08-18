@@ -7,14 +7,21 @@ from pathlib import Path
 import pytest
 
 from strix.audit import (
+    AuditJob,
+    JobResult,
+    audit_exit_code,
     claude_argv,
     codex_argv,
+    codex_worktree_argv,
     cursor_argv,
+    first_local_path,
     jobs_for_mode,
     load_worker_reports,
     mcp_argv,
+    plan_isolation,
     remint_ids,
     resolve_agent,
+    worker_prompt,
     write_mcp_config_json,
     write_parent_reports,
 )
@@ -141,3 +148,62 @@ def test_load_skips_missing_and_corrupt(tmp_path: Path) -> None:
     (parent / "workers" / "recon").mkdir(parents=True)
     (parent / "workers" / "recon" / "vulnerabilities.json").write_text("{", encoding="utf-8")
     assert load_worker_reports(parent, ["recon", "auth"]) == []
+
+
+def test_isolation_codex_git_uses_detach(tmp_path: Path) -> None:
+    plan = plan_isolation(
+        "codex", "recon", tmp_path / "src", tmp_path, tmp_path / "wt", is_git=True
+    )
+    assert plan.sequential is False
+    assert plan.worktree == tmp_path / "wt" / "recon"
+    assert "--detach" in codex_worktree_argv(plan.worktree)
+
+
+def test_isolation_claude_has_no_diy_worktree(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    plan = plan_isolation("claude", "recon", src, tmp_path, tmp_path / "wt", is_git=True)
+    assert plan.worktree is None
+    assert plan.worker_cwd == src
+    assert plan.sequential is False
+
+
+def test_isolation_nongit_is_sequential(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    plan = plan_isolation("claude", "recon", src, tmp_path, tmp_path / "wt", is_git=False)
+    assert plan.sequential is True
+    assert plan.worktree is None
+
+
+def test_isolation_url_only_parallel(tmp_path: Path) -> None:
+    plan = plan_isolation("cursor", "auth", None, tmp_path, tmp_path / "wt", is_git=False)
+    assert plan.sequential is False
+    assert plan.worker_cwd == tmp_path
+
+
+def test_exit_codes() -> None:
+    ok = JobResult("recon", 0, False)
+    bad = JobResult("auth", 1, False)
+    dead = JobResult("inj", 1, True)
+    assert audit_exit_code([ok], 0) == 0
+    assert audit_exit_code([ok, bad], 2) == 2
+    assert audit_exit_code([bad, dead], 0) == 1
+
+
+def test_worker_prompt_includes_skills_and_no_subagents() -> None:
+    job = AuditJob("auth", "Auth specialist", ("csrf",), "Test CSRF.")
+    text = worker_prompt(job, [{"type": "local_code", "original": "./app"}], "focus login")
+    assert "Auth specialist" in text
+    assert "load_skill" in text and "csrf" in text
+    assert "create_vulnerability_report" in text
+    assert "Do not spawn sub-agents" in text
+    assert "AUDIT_JOB_DONE" in text
+    assert "focus login" in text
+    assert "./app" in text
+
+
+def test_first_local_path() -> None:
+    info = [
+        {"type": "web_application", "details": {}, "original": "https://x"},
+        {"type": "local_code", "details": {"target_path": "/tmp/app"}, "original": "./app"},
+    ]
+    assert first_local_path(info) == Path("/tmp/app")
