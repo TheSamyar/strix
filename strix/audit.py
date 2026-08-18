@@ -17,18 +17,58 @@ class AuditJob:
 
 
 _QUICK: tuple[AuditJob, ...] = (
-    AuditJob("recon", "Recon specialist", ("asset_discovery",), "Map the attack surface. Do not deep-exploit."),
-    AuditJob("auth", "Auth specialist", ("authentication_jwt", "csrf"), "Test authentication, session, JWT, and CSRF."),
-    AuditJob("injection", "Injection specialist", ("sql_injection", "xss", "rce"), "Test SQLi, XSS, and RCE. Prove with a PoC before filing."),
-    AuditJob("access", "Access-control specialist", ("idor", "broken_function_level_authorization"), "Test IDOR and broken function-level authorization."),
+    AuditJob(
+        "recon",
+        "Recon specialist",
+        ("asset_discovery",),
+        "Map the attack surface. Do not deep-exploit.",
+    ),
+    AuditJob(
+        "auth",
+        "Auth specialist",
+        ("authentication_jwt", "csrf"),
+        "Test authentication, session, JWT, and CSRF.",
+    ),
+    AuditJob(
+        "injection",
+        "Injection specialist",
+        ("sql_injection", "xss", "rce"),
+        "Test SQLi, XSS, and RCE. Prove with a PoC before filing.",
+    ),
+    AuditJob(
+        "access",
+        "Access-control specialist",
+        ("idor", "broken_function_level_authorization"),
+        "Test IDOR and broken function-level authorization.",
+    ),
 )
 _STANDARD_EXTRA: tuple[AuditJob, ...] = (
-    AuditJob("ssrf_files", "SSRF and files specialist", ("ssrf", "path_traversal_lfi_rfi", "insecure_file_uploads"), "Test SSRF, path traversal, and file uploads."),
-    AuditJob("secrets_deps", "Secrets and deps specialist", ("information_disclosure", "dependency_cve_scanning"), "Find secrets and known-CVE dependencies."),
+    AuditJob(
+        "ssrf_files",
+        "SSRF and files specialist",
+        ("ssrf", "path_traversal_lfi_rfi", "insecure_file_uploads"),
+        "Test SSRF, path traversal, and file uploads.",
+    ),
+    AuditJob(
+        "secrets_deps",
+        "Secrets and deps specialist",
+        ("information_disclosure", "dependency_cve_scanning"),
+        "Find secrets and known-CVE dependencies.",
+    ),
 )
 _DEEP_EXTRA: tuple[AuditJob, ...] = (
-    AuditJob("logic", "Logic specialist", ("business_logic", "race_conditions"), "Test business logic and race conditions."),
-    AuditJob("deser_ssti", "Deser/SSTI specialist", ("insecure_deserialization", "ssti"), "Test insecure deserialization and SSTI."),
+    AuditJob(
+        "logic",
+        "Logic specialist",
+        ("business_logic", "race_conditions"),
+        "Test business logic and race conditions.",
+    ),
+    AuditJob(
+        "deser_ssti",
+        "Deser/SSTI specialist",
+        ("insecure_deserialization", "ssti"),
+        "Test insecure deserialization and SSTI.",
+    ),
 )
 
 
