@@ -28,7 +28,23 @@ from strix.tools.attack_surface.tools import (
     record_endpoint,
     record_role,
 )
+from strix.tools.chains.tools import (
+    add_chain_step,
+    chain_finding,
+    delete_chain,
+    hydrate_chains_from_disk,
+    list_chains,
+)
 from strix.tools.coverage.tools import coverage_report, scope_coverage
+from strix.tools.credentials.tools import (
+    delete_credential,
+    get_credential,
+    hydrate_credentials_from_disk,
+    list_credentials,
+    store_credential,
+)
+from strix.tools.diff_response.tools import diff_response
+from strix.tools.http_replay.tools import http_replay
 from strix.tools.load_skill.tool import load_skill
 from strix.tools.notes.tools import (
     create_note,
@@ -38,6 +54,7 @@ from strix.tools.notes.tools import (
     list_notes,
     update_note,
 )
+from strix.tools.openapi_import.tools import import_openapi
 from strix.tools.reporting.tool import (
     create_dependency_report,
     create_vulnerability_report,
@@ -131,6 +148,17 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     record_role,
     auth_matrix,
     mark_matrix_cell,
+    import_openapi,
+    http_replay,
+    diff_response,
+    store_credential,
+    list_credentials,
+    get_credential,
+    delete_credential,
+    chain_finding,
+    list_chains,
+    add_chain_step,
+    delete_chain,
 )
 
 _LIST_SKILLS_SCHEMA: dict[str, Any] = {
@@ -179,6 +207,8 @@ def bootstrap_mcp_run(run_name: str = DEFAULT_RUN_NAME) -> ReportState:
     hydrate_notes_from_disk(state_dir)
     hydrate_todos_from_disk(state_dir)
     hydrate_attack_surface_from_disk(state_dir)
+    hydrate_credentials_from_disk(state_dir)
+    hydrate_chains_from_disk(state_dir)
     _seed_coverage_todos()
     state.save_run_data()
     return state
