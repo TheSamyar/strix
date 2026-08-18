@@ -20,6 +20,15 @@ from strix.core.paths import runtime_state_dir
 from strix.interface.cli_args import get_version
 from strix.report.state import ReportState, get_global_report_state, set_global_report_state
 from strix.skills import get_available_skills
+from strix.tools.attack_surface.tools import (
+    auth_matrix,
+    hydrate_attack_surface_from_disk,
+    list_attack_surface,
+    mark_matrix_cell,
+    record_endpoint,
+    record_role,
+)
+from strix.tools.coverage.tools import coverage_report, scope_coverage
 from strix.tools.load_skill.tool import load_skill
 from strix.tools.notes.tools import (
     create_note,
@@ -32,6 +41,7 @@ from strix.tools.notes.tools import (
 from strix.tools.reporting.tool import (
     create_dependency_report,
     create_vulnerability_report,
+    executive_summary,
     get_report,
     list_reports,
 )
@@ -102,6 +112,7 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     create_dependency_report,
     list_reports,
     get_report,
+    executive_summary,
     create_note,
     list_notes,
     get_note,
@@ -113,6 +124,13 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     mark_todo_done,
     mark_todo_pending,
     delete_todo,
+    coverage_report,
+    scope_coverage,
+    record_endpoint,
+    list_attack_surface,
+    record_role,
+    auth_matrix,
+    mark_matrix_cell,
 )
 
 _LIST_SKILLS_SCHEMA: dict[str, Any] = {
@@ -160,6 +178,7 @@ def bootstrap_mcp_run(run_name: str = DEFAULT_RUN_NAME) -> ReportState:
     state_dir.mkdir(parents=True, exist_ok=True)
     hydrate_notes_from_disk(state_dir)
     hydrate_todos_from_disk(state_dir)
+    hydrate_attack_surface_from_disk(state_dir)
     _seed_coverage_todos()
     state.save_run_data()
     return state

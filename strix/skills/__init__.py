@@ -260,6 +260,53 @@ def _candidate_skill_files(skill_name: str) -> list[Path]:
     return _bare_skill_files(skill_name)
 
 
+_CHECKLIST_CATEGORY = "vulnerabilities"
+_METHODOLOGY_HEADING = "## Testing Methodology"
+_NUMBERED_ITEM = re.compile(r"^\d+\.\s+(?P<item>.+)$")
+_GENERIC_CHECKLIST: tuple[str, ...] = (
+    "Enumerate every user-controllable input, parameter, header, and endpoint in scope.",
+    "Test each documented technique and variant from the pack, not just the first that fires.",
+    "Confirm each candidate finding with a concrete PoC (request/response or DOM/network proof).",
+    "Record the outcome for every input tested.",
+)
+
+
+def _methodology_steps(body: str) -> list[str]:
+    """Pull the numbered steps out of a pack's ``## Testing Methodology`` section."""
+    steps: list[str] = []
+    in_section = False
+    for line in body.splitlines():
+        if line.startswith("## "):
+            in_section = line.strip() == _METHODOLOGY_HEADING
+            continue
+        if in_section:
+            match = _NUMBERED_ITEM.match(line.strip())
+            if match:
+                steps.append(match.group("item").strip())
+    return steps
+
+
+def build_test_checklist(skill_name: str, body: str) -> str | None:
+    """Render an actionable per-class test checklist for a vulnerability pack.
+
+    Derived from the pack's own ``## Testing Methodology`` steps so the pack
+    stays the single source of truth (falling back to a generic checklist for
+    packs without that section). Returns ``None`` for non-vulnerability skills.
+    """
+    candidates = _candidate_skill_files(skill_name)
+    if len(candidates) != 1 or candidates[0].parent.name != _CHECKLIST_CATEGORY:
+        return None
+    steps = _methodology_steps(body) or list(_GENERIC_CHECKLIST)
+    numbered = "\n".join(f"{i}. {step}" for i, step in enumerate(steps, 1))
+    name = skill_name.rsplit("/", maxsplit=1)[-1]
+    return (
+        f"### Test checklist for {name}\n\n"
+        "Work through every item against each in-scope input/parameter — test each "
+        "technique and variant, confirm with a PoC, and mark this class done in "
+        f"`list_todos` once the whole list is covered.\n\n{numbered}"
+    )
+
+
 def load_skills(skill_names: list[str]) -> dict[str, str]:
     """Load skill markdown bodies (frontmatter stripped) by name.
 

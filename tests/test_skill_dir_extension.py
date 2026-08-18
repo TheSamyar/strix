@@ -6,6 +6,7 @@ import pytest
 import strix.skills as skills_mod
 from strix.agents.prompt import render_system_prompt
 from strix.skills import (
+    build_test_checklist,
     get_all_skill_names,
     get_available_skills,
     load_skills,
@@ -232,3 +233,19 @@ def test_builtin_skill_still_loads_when_not_overridden(tmp_path: Path) -> None:
 def test_missing_skill_is_skipped(tmp_path: Path) -> None:
     register_skill_dir(tmp_path)
     assert load_skills(["does_not_exist"]) == {}
+
+
+def test_test_checklist_appended_for_vuln_pack() -> None:
+    body = load_skills(["xss"])["xss"]
+    checklist = build_test_checklist("xss", body)
+    assert checklist is not None
+    assert checklist.startswith("### Test checklist for xss")
+    assert "list_todos" in checklist
+    # Multiple concrete items derived from the pack's own methodology.
+    assert checklist.count("\n1. ") == 1
+    assert checklist.count("\n2. ") == 1
+
+
+def test_test_checklist_none_for_non_vuln_skill() -> None:
+    loaded = load_skills(["scan_modes/deep"])
+    assert build_test_checklist("scan_modes/deep", loaded["deep"]) is None

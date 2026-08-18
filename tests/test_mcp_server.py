@@ -62,6 +62,7 @@ def test_tools_list_includes_skill_and_report_tools() -> None:
         "create_vulnerability_report",
         "list_reports",
         "get_report",
+        "executive_summary",
     } <= names
     assert "create_agent" not in names
     assert "finish_scan" not in names
@@ -111,6 +112,7 @@ def test_file_and_list_vulnerability(tmp_path: Path) -> None:
             "```"
         ),
         "assumptions": "Victim is logged in and visits the crafted URL.",
+        "verification": "Re-ran the curl PoC twice; both times HTTP 200, payload reflected.",
         "fix_effort": "low",
         "cvss_breakdown": {
             "attack_vector": "N",
@@ -140,6 +142,23 @@ def test_file_and_list_vulnerability(tmp_path: Path) -> None:
     assert listed["total_count"] == 1
     assert listed["reports"][0]["title"] == "Reflected XSS in q"
     assert (tmp_path / "strix_runs" / "mcp-test" / "vulnerabilities.json").is_file()
+
+
+@pytest.mark.usefixtures("mcp_run")
+def test_executive_summary_counts_by_severity() -> None:
+    state = report_state_mod.get_global_report_state()
+    assert state is not None
+    state.add_vulnerability_report(title="Crit", severity="critical", target="t", cvss=9.8)
+    state.add_vulnerability_report(title="Med", severity="medium", target="t", cvss=5.0)
+
+    result = _call("tools/call", {"name": "executive_summary"})["result"]
+    assert result["isError"] is False
+    summary = json.loads(result["content"][0]["text"])
+    assert summary["success"] is True
+    assert summary["total_count"] == 2
+    assert summary["severity_counts"] == {"critical": 1, "medium": 1}
+    assert [f["severity"] for f in summary["findings"]] == ["critical", "medium"]
+    assert "# Executive Summary" in summary["markdown"]
 
 
 def test_notification_returns_none() -> None:

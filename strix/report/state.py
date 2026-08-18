@@ -237,6 +237,7 @@ class ReportState:
         remediation_steps: str | None = None,
         evidence: str | None = None,
         assumptions: str | None = None,
+        verification: str | None = None,
         fix_effort: str | None = None,
         cvss: float | None = None,
         cvss_breakdown: dict[str, str] | None = None,
@@ -278,6 +279,8 @@ class ReportState:
             report["evidence"] = evidence.strip()
         if assumptions:
             report["assumptions"] = assumptions.strip()
+        if verification:
+            report["verification"] = verification.strip()
         if fix_effort:
             report["fix_effort"] = fix_effort.strip().lower()
         if cvss is not None:

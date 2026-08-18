@@ -236,6 +236,67 @@ def _validate_reproduction_evidence(
     return errors
 
 
+# Re-verification gate. Concrete reproduction evidence proves the PoC worked
+# once; this proves the client re-ran it and observed the result a *second*
+# time before filing. Conservative — only rejects empty, too-thin, or
+# placeholder/hedge text.
+_MIN_VERIFICATION_CHARS = 25
+
+_PLACEHOLDER_VERIFICATION = frozenset(
+    {
+        "n/a",
+        "na",
+        "none",
+        "todo",
+        "tbd",
+        "assumed",
+        "assume",
+        "not re-run",
+        "not rerun",
+        "not run",
+        "not tested",
+        "not verified",
+        "should reproduce",
+        "should work",
+        "would reproduce",
+        "will reproduce",
+        "see above",
+        "see poc",
+    }
+)
+
+
+def _validate_verification(verification: str) -> list[str]:
+    """Reject findings not explicitly marked as re-run/re-verified.
+
+    Conservative referee mirroring ``_validate_reproduction_evidence``: the
+    client must state how it re-ran the PoC and what it observed the second
+    time. A genuine "re-ran the curl PoC, got HTTP 200 with the alert payload
+    reflected, twice" passes; empty / one-word / placeholder text is rejected.
+    """
+    verification = (verification or "").strip()
+    if not verification:
+        return [
+            "verification is required: state how you re-ran the PoC and the result "
+            "observed on re-run (e.g. 're-ran the curl PoC twice, both times HTTP 200 "
+            "with the alert payload reflected'). A finding not reproduced a second "
+            "time must not be filed."
+        ]
+    errors: list[str] = []
+    if len(verification) < _MIN_VERIFICATION_CHARS:
+        errors.append(
+            f"verification is too thin ({len(verification)} chars) — describe what you "
+            "re-executed and the concrete result you observed the second time, not a "
+            "one-word confirmation."
+        )
+    if verification.lower().strip(".") in _PLACEHOLDER_VERIFICATION:
+        errors.append(
+            "verification is a placeholder/hedge, not proof of a re-run — replace it "
+            "with what you actually re-executed and observed a second time."
+        )
+    return errors
+
+
 _REQUIRED_FIELDS = {
     "title": "Title cannot be empty",
     "description": "Description cannot be empty",
@@ -271,6 +332,7 @@ async def _do_create(  # noqa: PLR0912
     cve: str | None,
     cwe: str | None,
     code_locations: list[dict[str, Any]] | None,
+    verification: str = "",
     fix_pr_body: str | None = None,
     agent_id: str | None = None,
     agent_name: str | None = None,
@@ -297,6 +359,9 @@ async def _do_create(  # noqa: PLR0912
     errors.extend(
         _validate_reproduction_evidence(evidence, poc_script_code, poc_description)
     )
+
+    # Re-verification gate: the PoC must have been re-run and re-observed.
+    errors.extend(_validate_verification(verification))
 
     fix_effort = (fix_effort or "").strip().lower()
     if fix_effort not in _VALID_FIX_EFFORT:
@@ -392,6 +457,7 @@ async def _do_create(  # noqa: PLR0912
             remediation_steps=remediation_steps,
             evidence=evidence,
             assumptions=assumptions,
+            verification=verification.strip(),
             fix_effort=fix_effort,
             cvss=cvss_score,
             cvss_breakdown=cvss_breakdown,
@@ -454,6 +520,7 @@ async def create_vulnerability_report(
     assumptions: str,
     fix_effort: str,
     cvss_breakdown: dict[str, str],
+    verification: str = "",
     endpoint: str | None = None,
     method: str | None = None,
     cve: str | None = None,
@@ -658,6 +725,13 @@ async def create_vulnerability_report(
         assumptions: Short note on the assumptions/prerequisites that
             make this finding impactful or exploitable (e.g. "assumes an
             authenticated low-privilege user").
+        verification: **Required.** How you re-ran the PoC and the result
+            you observed on re-run — proof the finding reproduces a second
+            time, not just once. State what you re-executed and the
+            concrete outcome (e.g. "re-ran the `curl` PoC twice, both
+            times HTTP 200 with the alert payload reflected"). Placeholder
+            / hedge text ("assumed", "not re-run", "should reproduce") is
+            rejected.
         fix_effort: One of ``trivial`` / ``low`` / ``medium`` / ``high``.
         cvss_breakdown: 8-metric object per the format above.
         endpoint: API path / Git path (e.g. ``/api/login``).
@@ -789,6 +863,7 @@ async def create_vulnerability_report(
         cve=cve,
         cwe=cwe,
         code_locations=code_locations,
+        verification=verification,
         fix_pr_body=fix_pr_body,
         agent_id=agent_id,
         agent_name=agent_name,
@@ -1600,6 +1675,68 @@ def _do_get_report(report_id: str, caller_agent_id: str | None = None) -> dict[s
     }
 
 
+def _overall_risk_statement(counts: dict[str, int], total: int) -> str:
+    if total == 0:
+        return "No vulnerabilities have been filed for this run."
+    highest = next((sev for sev in _SEVERITY_ORDER if counts.get(sev)), "none")
+    breakdown = ", ".join(f"{counts[sev]} {sev}" for sev in _SEVERITY_ORDER if counts.get(sev))
+    return (
+        f"{total} finding(s) filed ({breakdown}). Highest severity observed: {highest}. "
+        "Prioritize remediation of the highest-severity findings first."
+    )
+
+
+def _executive_summary_markdown(
+    counts: dict[str, int], findings: list[dict[str, Any]], risk: str
+) -> str:
+    lines = ["# Executive Summary", "", "## Findings by severity", ""]
+    lines += (
+        [f"- **{sev.capitalize()}**: {counts[sev]}" for sev in _SEVERITY_ORDER if counts.get(sev)]
+        or ["- None"]
+    )
+    lines += ["", "## Ranked findings", ""]
+    if findings:
+        for f in findings:
+            cvss = f"CVSS {f['cvss']}" if f.get("cvss") is not None else "CVSS n/a"
+            lines.append(
+                f"- **{str(f.get('severity') or '?').capitalize()}** — "
+                f"{f.get('title') or 'Untitled'} ({cvss}, target: {f.get('target') or 'n/a'}) "
+                f"[{f.get('id') or ''}]"
+            )
+    else:
+        lines.append("- No findings filed.")
+    lines += ["", "## Overall risk", "", risk]
+    return "\n".join(lines)
+
+
+def _do_executive_summary() -> dict[str, Any]:
+    from strix.report.state import get_global_report_state
+
+    report_state = get_global_report_state()
+    reports = report_state.get_existing_vulnerabilities() if report_state is not None else []
+    ranked = sorted(reports, key=lambda r: (_report_severity_rank(r), str(r.get("id", ""))))
+    counts = _severity_counts(reports)
+    findings = [
+        {
+            "id": r.get("id"),
+            "title": r.get("title"),
+            "severity": r.get("severity"),
+            "cvss": r.get("cvss"),
+            "target": r.get("target") or r.get("endpoint"),
+        }
+        for r in ranked
+    ]
+    risk = _overall_risk_statement(counts, len(reports))
+    return {
+        "success": True,
+        "total_count": len(reports),
+        "severity_counts": counts,
+        "findings": findings,
+        "risk_statement": risk,
+        "markdown": _executive_summary_markdown(counts, findings, risk),
+    }
+
+
 @function_tool(timeout=30)
 async def list_reports(
     ctx: RunContextWrapper,
@@ -1684,6 +1821,29 @@ async def get_report(ctx: RunContextWrapper, report_id: str) -> str:
     caller_agent_id, _ = _caller_identity(ctx)
     return json.dumps(
         await _run_report_reader(_do_get_report, report_id, caller_agent_id),
+        ensure_ascii=False,
+        default=str,
+    )
+
+
+@function_tool(timeout=30)
+async def executive_summary(ctx: RunContextWrapper) -> str:
+    """Severity-ranked executive summary of every finding filed this run.
+
+    **For the orchestrator / root agent** assembling the final deliverable.
+    Reads all reports filed by any agent (the same shared store as
+    ``list_reports``) and returns:
+
+    - ``severity_counts`` — counts per severity (critical/high/medium/low/info).
+    - ``findings`` — findings ranked critical -> info, each with ``id``,
+      ``title``, ``severity``, ``cvss``, and ``target``.
+    - ``risk_statement`` — a short overall risk statement.
+    - ``markdown`` — the same summary rendered as markdown.
+
+    Read-only — it never files, mutates, or dedupes anything.
+    """
+    return json.dumps(
+        await _run_report_reader(_do_executive_summary),
         ensure_ascii=False,
         default=str,
     )

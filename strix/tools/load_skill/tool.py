@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from agents import RunContextWrapper, function_tool
 
-from strix.skills import load_skills, validate_requested_skills
+from strix.skills import build_test_checklist, load_skills, validate_requested_skills
 
 
 @function_tool(timeout=10)
@@ -32,5 +32,11 @@ async def load_skill(ctx: RunContextWrapper, skills: list[str]) -> str:
     contents = load_skills(requested)
     if not contents:
         return "load_skill: no content loaded for requested skills."
-    sections = [f"## Skill: {name}\n\n{body}" for name, body in contents.items()]
+    sections = []
+    for name, body in contents.items():
+        section = f"## Skill: {name}\n\n{body}"
+        checklist = build_test_checklist(name, body)
+        if checklist:
+            section = f"{section}\n\n{checklist}"
+        sections.append(section)
     return "\n\n---\n\n".join(sections)

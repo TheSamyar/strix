@@ -390,6 +390,33 @@ def seed_todos(agent_id: str, todos: list[dict[str, Any]]) -> int:
     return created
 
 
+def coverage_todos(agent_id: str, marker: str) -> list[dict[str, Any]]:
+    """Return *agent_id*'s coverage todos — the ``marker``-prefixed checklist
+    entries — each as ``{todo_id, title, status, ...}``. Reads the same store
+    ``list_todos`` does; plain function (no FunctionTool ctx) for host tools."""
+    return [
+        {**todo, "todo_id": tid}
+        for tid, todo in _get_agent_todos(agent_id).items()
+        if str(todo.get("title", "")).startswith(marker)
+    ]
+
+
+def delete_todos(agent_id: str, todo_ids: list[str]) -> int:
+    """Delete todos by id for *agent_id*, returning the count removed.
+
+    Direct store access (no FunctionTool ctx) for host tools that prune the
+    checklist programmatically (see scope_coverage)."""
+    agent_todos = _get_agent_todos(agent_id)
+    removed = 0
+    for tid in todo_ids:
+        if tid in agent_todos:
+            del agent_todos[tid]
+            removed += 1
+    if removed:
+        _persist()
+    return removed
+
+
 @function_tool(timeout=30)
 async def list_todos(
     ctx: RunContextWrapper,

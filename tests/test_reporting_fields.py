@@ -50,6 +50,8 @@ _DEP_CONTEXT = {
 
 _DEP_CONTEXT_VECTOR = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
 
+_VERIFICATION = "Re-ran the curl PoC twice; both times HTTP 200 with the payload reflected."
+
 _DEP_EVIDENCE = "src/render.ts:14 imports the package."
 
 _DEP_REASONING = "Only scripts/import.py reaches the sink, so the impact is availability only."
@@ -78,6 +80,7 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
             "```html\n<h2>Results for <script>alert(1)</script></h2>\n```"
         ),
         assumptions="Assumes a victim opens a crafted link.",
+        verification=_VERIFICATION,
         fix_effort="LOW",
         cvss_breakdown=_CVSS,
         endpoint="/search",
@@ -91,6 +94,7 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
     report = report_state.vulnerability_reports[0]
     assert report["evidence"].startswith("Response echoes the payload verbatim:")
     assert report["assumptions"] == "Assumes a victim opens a crafted link."
+    assert report["verification"] == _VERIFICATION
     assert report["fix_effort"] == "low"
     assert report["fix_pr_body"] == "## Fix\nEncode output."
     assert report["finding_class"] == "dynamic"
@@ -141,6 +145,7 @@ async def test_create_report_accepts_real_poc(report_state: ReportState) -> None
             "user=admin' OR '1'='1\n```\nResponse: `HTTP/1.1 200 OK` with the admin dashboard."
         ),
         assumptions="Assumes the login endpoint is reachable.",
+        verification=_VERIFICATION,
         fix_effort="high",
         cvss_breakdown=_CVSS,
         endpoint="/login",
@@ -150,6 +155,40 @@ async def test_create_report_accepts_real_poc(report_state: ReportState) -> None
         code_locations=None,
     )
     assert result["success"] is True, result
+    assert report_state.vulnerability_reports[0]["verification"] == _VERIFICATION
+
+
+@pytest.mark.parametrize("bad_verification", ["", "assumed", "N/A", "should reproduce"])
+async def test_create_report_rejects_missing_or_placeholder_verification(
+    report_state: ReportState, bad_verification: str
+) -> None:
+    result = await _do_create(
+        title="SQLi in login",
+        description="username parameter is injectable.",
+        impact="Full DB read.",
+        target="https://app.example.com",
+        technical_analysis="username concatenated into the SQL query.",
+        poc_description="1. send the crafted request below",
+        poc_script_code="curl -s 'https://app.example.com/login' --data \"user=admin' OR '1'='1\"",
+        remediation_steps="Use parameterized queries.",
+        evidence=(
+            "The injected request returns the admin row:\n\n"
+            "```http\nPOST /login HTTP/1.1\nHost: app.example.com\n\n"
+            "user=admin' OR '1'='1\n```\nResponse: `HTTP/1.1 200 OK` with the admin dashboard."
+        ),
+        assumptions="Assumes the login endpoint is reachable.",
+        verification=bad_verification,
+        fix_effort="high",
+        cvss_breakdown=_CVSS,
+        endpoint="/login",
+        method="POST",
+        cve=None,
+        cwe="CWE-89",
+        code_locations=None,
+    )
+    assert result["success"] is False
+    assert any("verification" in e for e in result["errors"])
+    assert not report_state.vulnerability_reports
 
 
 async def test_create_report_rejects_unproven_evidence(report_state: ReportState) -> None:
@@ -981,7 +1020,7 @@ def test_tool_descriptions_include_formatting_guidance() -> None:
 
 def test_vuln_tool_exposes_new_params() -> None:
     props = create_vulnerability_report.params_json_schema["properties"]
-    for field in ("evidence", "assumptions", "fix_effort", "fix_pr_body"):
+    for field in ("evidence", "assumptions", "verification", "fix_effort", "fix_pr_body"):
         assert field in props
 
     dep_props = create_dependency_report.params_json_schema["properties"]
