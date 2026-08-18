@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import subprocess
-from typing import TYPE_CHECKING, Any
+from typing import Any
+
+import pytest
 
 from strix.tools.scanner_deps import tools as sd
-
-
-if TYPE_CHECKING:
-    import pytest
 
 
 def test_tool_status_shape() -> None:
@@ -42,7 +40,7 @@ def test_install_runs_first_available_candidate(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(sd, "_available_managers", lambda: {"apt-get"})
     ran: list[list[str]] = []
 
-    def _fake_run(argv: list[str]) -> tuple[bool, str]:
+    def _fake_run(argv: list[str], **_kw: Any) -> tuple[bool, str]:
         ran.append(argv)
         return True, " ".join(argv)
 
@@ -64,7 +62,7 @@ def test_install_falls_through_to_next_candidate(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(sd.shutil, "which", lambda b: None if b == "ffuf" else "/bin/x")
     monkeypatch.setattr(sd, "_available_managers", lambda: {"brew", "go"})
 
-    def _fake_run(argv: list[str]) -> tuple[bool, str]:
+    def _fake_run(argv: list[str], **_kw: Any) -> tuple[bool, str]:
         if argv[0] == "brew":
             return False, "brew boom"
         return True, " ".join(argv)
@@ -120,7 +118,7 @@ def test_upgrade_runs_upgrade_form_for_present_tool(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(sd, "_available_managers", lambda: {"brew"})
     ran: list[list[str]] = []
 
-    def _fake_run(argv: list[str]) -> tuple[bool, str]:
+    def _fake_run(argv: list[str], **_kw: Any) -> tuple[bool, str]:
         ran.append(argv)
         return True, " ".join(argv)
 
@@ -135,7 +133,7 @@ def test_upgrade_refreshes_nuclei_templates(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(sd, "_available_managers", lambda: {"brew"})
     ran: list[list[str]] = []
 
-    def _fake_run(argv: list[str]) -> tuple[bool, str]:
+    def _fake_run(argv: list[str], **_kw: Any) -> tuple[bool, str]:
         ran.append(argv)
         return True, " ".join(argv)
 
@@ -143,6 +141,57 @@ def test_upgrade_refreshes_nuclei_templates(monkeypatch: pytest.MonkeyPatch) -> 
     results = sd.install_tools(["nuclei"], upgrade=True)
     assert results["nuclei-templates"]["status"] == "upgraded"
     assert ["nuclei", "-update-templates"] in ran
+
+
+def test_run_install_skips_sudo_when_disallowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sd.os, "geteuid", lambda: 1000, raising=False)
+    called = False
+
+    def _boom(*_a: Any, **_k: Any) -> Any:
+        nonlocal called
+        called = True
+        raise AssertionError("subprocess should not run")
+
+    monkeypatch.setattr(sd.subprocess, "run", _boom)
+    ok, detail = sd._run_install(["apt-get", "install", "-y", "nmap"], allow_sudo=False)
+    assert ok is False
+    assert "sudo" in detail
+    assert called is False
+
+
+def test_is_stale_true_when_no_marker(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    monkeypatch.setattr(sd, "_MARKER", tmp_path / "none.json")
+    monkeypatch.delenv("STRIX_TOOL_AUTOUPDATE_DAYS", raising=False)
+    assert sd.is_stale() is True
+
+
+def test_is_stale_false_when_fresh(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    marker = tmp_path / "m.json"
+    monkeypatch.setattr(sd, "_MARKER", marker)
+    sd._mark_updated()  # writes now
+    assert sd.is_stale(7) is False
+
+
+def test_auto_update_disabled_with_zero_days(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIX_TOOL_AUTOUPDATE_DAYS", "0")
+    monkeypatch.setattr(sd, "install_tools", lambda **_k: pytest.fail("must not install"))
+    assert sd.auto_update_if_stale() is None
+
+
+def test_auto_update_runs_when_stale(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    monkeypatch.setattr(sd, "_MARKER", tmp_path / "m.json")
+    monkeypatch.delenv("STRIX_TOOL_AUTOUPDATE_DAYS", raising=False)
+    seen: dict[str, Any] = {}
+
+    def _fake_install(**kwargs: Any) -> dict[str, dict[str, object]]:
+        seen.update(kwargs)
+        return {"nmap": {"status": "upgraded", "detail": "brew upgrade nmap"}}
+
+    monkeypatch.setattr(sd, "install_tools", _fake_install)
+    results = sd.auto_update_if_stale()
+    assert results is not None
+    assert seen == {"upgrade": True, "allow_sudo": False}  # non-interactive upgrade
+    assert (tmp_path / "m.json").exists()  # marker written
 
 
 def test_render_report_flags_failures() -> None:

@@ -9,15 +9,24 @@ holds the registry and the install/check logic behind
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
 import subprocess
+import time
+from pathlib import Path
 
 from agents import RunContextWrapper, function_tool
 
 
 logger = logging.getLogger(__name__)
+
+# Auto-update on server start when the last update is older than this many days.
+# Set STRIX_TOOL_AUTOUPDATE_DAYS=0 to disable. The auto path skips sudo installers
+# so it never blocks startup on a password prompt; `--update-tools` still does them.
+_DEFAULT_AUTOUPDATE_DAYS = 7
+_MARKER = Path.home() / ".strix" / "tool_update.json"
 
 # Per-tool install candidates, tried in order; the first whose manager is
 # present on the host is used. `go`/`pipx`/`gem` fallbacks cover distros whose
@@ -134,12 +143,21 @@ def tool_status() -> dict[str, dict[str, object]]:
     return status
 
 
-def _run_install(argv: list[str]) -> tuple[bool, str]:
-    """Run one install command, prepending sudo for apt/gem when not root."""
+def _run_install(argv: list[str], *, allow_sudo: bool = True) -> tuple[bool, str]:
+    """Run one install command, prepending sudo for apt/gem when not root.
+
+    With ``allow_sudo=False`` a command that would need sudo is skipped rather
+    than run — used by the non-interactive auto-update so it never blocks on a
+    password prompt.
+    """
     manager = argv[0]
     cmd = list(argv)
-    if manager in {"apt-get", "gem"} and os.geteuid() != 0 and shutil.which("sudo"):
-        cmd = ["sudo", *cmd]
+    needs_sudo = manager in {"apt-get", "gem"} and os.geteuid() != 0
+    if needs_sudo:
+        if not allow_sudo:
+            return False, f"{manager} needs sudo; skipped (run `strix mcp --update-tools`)"
+        if shutil.which("sudo"):
+            cmd = ["sudo", *cmd]
     try:
         proc = subprocess.run(  # noqa: S603 - fixed argv from the registry, no shell
             cmd,
@@ -183,7 +201,7 @@ def _refresh_nuclei_templates() -> tuple[bool, str]:
 
 
 def install_tools(
-    names: list[str] | None = None, *, upgrade: bool = False
+    names: list[str] | None = None, *, upgrade: bool = False, allow_sudo: bool = True
 ) -> dict[str, dict[str, object]]:
     """Install missing scanner binaries, and optionally upgrade present ones.
 
@@ -191,7 +209,8 @@ def install_tools(
     until one whose manager is available succeeds. With `upgrade=False` an
     already-present tool is left alone (`already`); with `upgrade=True` it is
     re-run through the manager's upgrade command (`upgraded`), and nuclei's
-    templates are refreshed.
+    templates are refreshed. With `allow_sudo=False` sudo-needing installers are
+    skipped instead of run (non-interactive auto-update path).
     """
     managers = _available_managers()
     targets = [_BY_NAME[n] for n in names if n in _BY_NAME] if names else list(SCANNERS)
@@ -218,7 +237,7 @@ def install_tools(
             run_argv = _to_upgrade(argv) if present else argv
             verb = "Upgrading" if present else "Installing"
             logger.info("%s %s via: %s", verb, s.name, " ".join(run_argv))
-            ok, detail = _run_install(run_argv)
+            ok, detail = _run_install(run_argv, allow_sudo=allow_sudo)
             if ok:
                 results[s.name] = {
                     "status": "upgraded" if present else "installed",
@@ -260,6 +279,59 @@ def render_install_report(results: dict[str, dict[str, object]]) -> str:
 def missing_tools() -> list[str]:
     """Names of scanners whose binary is not on PATH."""
     return [name for name, s in tool_status().items() if not s["installed"]]
+
+
+def _last_update_epoch() -> float | None:
+    try:
+        return float(json.loads(_MARKER.read_text())["updated_at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _mark_updated() -> None:
+    try:
+        _MARKER.parent.mkdir(parents=True, exist_ok=True)
+        _MARKER.write_text(json.dumps({"updated_at": time.time()}))
+    except OSError as exc:
+        logger.warning("Could not write tool-update marker: %s", exc)
+
+
+def _autoupdate_days() -> int:
+    raw = os.environ.get("STRIX_TOOL_AUTOUPDATE_DAYS")
+    if raw is None:
+        return _DEFAULT_AUTOUPDATE_DAYS
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return _DEFAULT_AUTOUPDATE_DAYS
+
+
+def is_stale(days: int | None = None) -> bool:
+    """True if tools have never been updated or the last update is older than `days`."""
+    days = _autoupdate_days() if days is None else days
+    last = _last_update_epoch()
+    if last is None:
+        return True
+    return (time.time() - last) > days * 86400
+
+
+def auto_update_if_stale() -> dict[str, dict[str, object]] | None:
+    """Upgrade scanners in-place if the last update is stale. Returns results, or
+    None when disabled (days=0) or still fresh.
+
+    Non-interactive: skips sudo installers so it never hangs startup. Safe to
+    run in a background thread. Writes the marker regardless of per-tool outcome
+    so a transient failure doesn't retry on every launch.
+    """
+    days = _autoupdate_days()
+    if days == 0 or not is_stale(days):
+        return None
+    logger.info("Scanner tools stale (>%dd); auto-updating in the background…", days)
+    results = install_tools(upgrade=True, allow_sudo=False)
+    _mark_updated()
+    upgraded = [n for n, r in results.items() if r["status"] in {"installed", "upgraded"}]
+    logger.info("Auto-update done. Updated: %s", ", ".join(upgraded) or "nothing")
+    return results
 
 
 @function_tool

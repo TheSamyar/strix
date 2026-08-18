@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import sys
+import threading
 from typing import TYPE_CHECKING, Any
 
 from agents.tool_context import ToolContext
@@ -70,6 +71,7 @@ from strix.tools.reporting.tool import (
 )
 from strix.tools.run_scanner.tools import run_scanner
 from strix.tools.scanner_deps.tools import (
+    auto_update_if_stale,
     check_tools,
     install_tools,
     missing_tools,
@@ -427,5 +429,8 @@ def run_mcp(argv: list[str]) -> int:
             "Scanner tools not installed: %s. Run `strix mcp --install-tools` to add them.",
             ", ".join(absent),
         )
+    # Upgrade stale tools in the background so a long-idle client picks up latest
+    # without blocking startup (STRIX_TOOL_AUTOUPDATE_DAYS=0 disables it).
+    threading.Thread(target=auto_update_if_stale, name="strix-tool-autoupdate", daemon=True).start()
     logger.info("MCP server ready (run=%s)", args.run_name)
     return serve_stdio()
