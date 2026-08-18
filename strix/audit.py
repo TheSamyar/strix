@@ -11,6 +11,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -396,6 +397,7 @@ def is_git_repo(path: Path) -> bool:
 
 
 _live_procs: list[subprocess.Popen[bytes]] = []
+_interrupted = threading.Event()
 
 
 def _kill_live_processes() -> None:
@@ -417,6 +419,7 @@ def run_jobs(  # noqa: PLR0915
     max_workers: int,
     timeout: int,
 ) -> tuple[list[JobResult], int]:
+    _interrupted.clear()
     local = first_local_path(targets_info)
     git = bool(local and is_git_repo(local))
     tmp = parent / ".worktrees"
@@ -435,7 +438,9 @@ def run_jobs(  # noqa: PLR0915
     }
     worker_run_base = parent.relative_to(original_cwd / "strix_runs").as_posix()
 
-    def run_job(job: AuditJob) -> JobResult:
+    def run_job(job: AuditJob) -> JobResult:  # noqa: PLR0912, PLR0915
+        if _interrupted.is_set():
+            return JobResult(job.id, 1, timed_out=False)
         plan = plans[job.id]
         if plan.worktree:
             subprocess.run(  # noqa: S603
@@ -444,6 +449,8 @@ def run_jobs(  # noqa: PLR0915
                 check=True,
             )
             added_worktrees.append(plan.worktree)
+            if _interrupted.is_set():
+                return JobResult(job.id, 1, timed_out=False)
 
         worker_dir = parent / "workers" / job.id
         worker_dir.mkdir(parents=True, exist_ok=True)
@@ -482,6 +489,8 @@ def run_jobs(  # noqa: PLR0915
 
         proc: subprocess.Popen[bytes] | None = None
         try:
+            if _interrupted.is_set():
+                return JobResult(job.id, 1, timed_out=False)
             proc = subprocess.Popen(  # noqa: S603
                 argv,
                 cwd=plan.worker_cwd,
@@ -518,6 +527,7 @@ def run_jobs(  # noqa: PLR0915
                 futures = [executor.submit(run_job, job) for job in jobs]
                 results = [future.result() for future in futures]
             except KeyboardInterrupt:
+                _interrupted.set()
                 _kill_live_processes()
                 raise
             finally:
@@ -532,6 +542,7 @@ def run_jobs(  # noqa: PLR0915
         write_parent_reports(parent, reports, jobs_summary=jobs_summary)
         return results, len(reports)
     except KeyboardInterrupt:
+        _interrupted.set()
         _kill_live_processes()
         raise
     finally:

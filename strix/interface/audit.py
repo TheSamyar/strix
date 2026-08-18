@@ -10,6 +10,7 @@ from pathlib import Path
 from strix.audit import (
     AGENT_HINTS,
     SCAN_MODES,
+    _interrupted,
     _kill_live_processes,
     audit_exit_code,
     jobs_for_mode,
@@ -89,6 +90,7 @@ def run_audit(argv: list[str]) -> int:
             timeout=args.timeout,
         )
     except KeyboardInterrupt:
+        _interrupted.set()
         _kill_live_processes()
         write_run_record(parent, {"status": "error", "agent": agent})
         return 1

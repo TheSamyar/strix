@@ -7,12 +7,15 @@ import os
 import signal
 import stat
 import sys
+import threading
 import time
 from argparse import Namespace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+
+import strix.audit as audit_mod
 
 
 if TYPE_CHECKING:
@@ -402,3 +405,72 @@ def test_run_jobs_kills_sequential_worker_on_keyboard_interrupt(
             pid = int(pid_path.read_text(encoding="utf-8"))
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(pid, signal.SIGKILL)
+
+
+def test_run_jobs_does_not_spawn_parallel_worker_after_keyboard_interrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = tmp_path / "app"
+    (app / ".git").mkdir(parents=True)
+    fake = tmp_path / "claude"
+    fake.write_text("#!/bin/sh\nexec sleep 60\n", encoding="utf-8")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    release_setup = threading.Event()
+    config_calls = 0
+    config_lock = threading.Lock()
+    original_config = audit_mod.write_mcp_config_json
+
+    def delayed_second_config(command: str, args: list[str]) -> dict[str, object]:
+        nonlocal config_calls
+        with config_lock:
+            config_calls += 1
+            call = config_calls
+        if call == 2:
+            assert release_setup.wait(2)
+        return original_config(command, args)
+
+    spawned: list[subprocess.Popen[bytes]] = []
+    original_popen = audit_mod.subprocess.Popen
+
+    def tracked_popen(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        proc = original_popen(*args, **kwargs)
+        spawned.append(proc)
+        return proc
+
+    def interrupt_first_communicate(
+        self: subprocess.Popen[bytes], timeout: int | None = None
+    ) -> None:
+        del self, timeout
+        if not release_setup.is_set():
+            release_setup.set()
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(audit_mod, "write_mcp_config_json", delayed_second_config)
+    monkeypatch.setattr(original_popen, "communicate", interrupt_first_communicate)
+    monkeypatch.setattr(audit_mod.subprocess, "Popen", tracked_popen)
+
+    started = time.monotonic()
+    with pytest.raises(KeyboardInterrupt):
+        run_jobs(
+            [
+                AuditJob("recon", "Recon specialist", ("asset_discovery",), "Map it."),
+                AuditJob("auth", "Auth specialist", ("csrf",), "Test it."),
+            ],
+            agent="claude",
+            binary=str(fake),
+            targets_info=[
+                {
+                    "type": "local_code",
+                    "details": {"target_path": str(app)},
+                    "original": str(app),
+                }
+            ],
+            original_cwd=tmp_path,
+            parent=tmp_path / "strix_runs" / "parallel-interrupt",
+            instruction="",
+            max_workers=2,
+            timeout=3600,
+        )
+
+    assert time.monotonic() - started < 2
+    assert len(spawned) == 1
