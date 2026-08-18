@@ -181,9 +181,9 @@ def test_isolation_url_only_parallel(tmp_path: Path) -> None:
 
 
 def test_exit_codes() -> None:
-    ok = JobResult("recon", 0, False)
-    bad = JobResult("auth", 1, False)
-    dead = JobResult("inj", 1, True)
+    ok = JobResult("recon", 0, timed_out=False)
+    bad = JobResult("auth", 1, timed_out=False)
+    dead = JobResult("inj", 1, timed_out=True)
     assert audit_exit_code([ok], 0) == 0
     assert audit_exit_code([ok, bad], 2) == 2
     assert audit_exit_code([bad, dead], 0) == 1
@@ -201,9 +201,10 @@ def test_worker_prompt_includes_skills_and_no_subagents() -> None:
     assert "./app" in text
 
 
-def test_first_local_path() -> None:
+def test_first_local_path(tmp_path: Path) -> None:
+    app = tmp_path / "app"
     info = [
         {"type": "web_application", "details": {}, "original": "https://x"},
-        {"type": "local_code", "details": {"target_path": "/tmp/app"}, "original": "./app"},
+        {"type": "local_code", "details": {"target_path": str(app)}, "original": "./app"},
     ]
-    assert first_local_path(info) == Path("/tmp/app")
+    assert first_local_path(info) == app
