@@ -71,9 +71,12 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
         target="https://app.example.com",
         technical_analysis="Input interpolated into HTML.",
         poc_description="1. open /search?q=<payload>",
-        poc_script_code="GET /search?q=<script>alert(1)</script>",
+        poc_script_code="GET /search?q=<script>alert(1)</script> HTTP/1.1\nHost: app.example.com",
         remediation_steps="Context-encode output.",
-        evidence="Response echoes the payload verbatim.",
+        evidence=(
+            "Response echoes the payload verbatim:\n\n"
+            "```html\n<h2>Results for <script>alert(1)</script></h2>\n```"
+        ),
         assumptions="Assumes a victim opens a crafted link.",
         fix_effort="LOW",
         cvss_breakdown=_CVSS,
@@ -86,7 +89,7 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
     )
     assert result["success"] is True
     report = report_state.vulnerability_reports[0]
-    assert report["evidence"] == "Response echoes the payload verbatim."
+    assert report["evidence"].startswith("Response echoes the payload verbatim:")
     assert report["assumptions"] == "Assumes a victim opens a crafted link."
     assert report["fix_effort"] == "low"
     assert report["fix_pr_body"] == "## Fix\nEncode output."
@@ -119,6 +122,60 @@ async def test_create_report_requires_evidence_and_assumptions(
     joined = " ".join(result["errors"])
     assert "Evidence" in joined
     assert "Assumptions" in joined
+    assert not report_state.vulnerability_reports
+
+
+async def test_create_report_accepts_real_poc(report_state: ReportState) -> None:
+    result = await _do_create(
+        title="SQLi in login",
+        description="username parameter is injectable.",
+        impact="Full DB read.",
+        target="https://app.example.com",
+        technical_analysis="username concatenated into the SQL query.",
+        poc_description="1. send the crafted request below",
+        poc_script_code="curl -s 'https://app.example.com/login' --data \"user=admin' OR '1'='1\"",
+        remediation_steps="Use parameterized queries.",
+        evidence=(
+            "The injected request returns the admin row:\n\n"
+            "```http\nPOST /login HTTP/1.1\nHost: app.example.com\n\n"
+            "user=admin' OR '1'='1\n```\nResponse: `HTTP/1.1 200 OK` with the admin dashboard."
+        ),
+        assumptions="Assumes the login endpoint is reachable.",
+        fix_effort="high",
+        cvss_breakdown=_CVSS,
+        endpoint="/login",
+        method="POST",
+        cve=None,
+        cwe="CWE-89",
+        code_locations=None,
+    )
+    assert result["success"] is True, result
+
+
+async def test_create_report_rejects_unproven_evidence(report_state: ReportState) -> None:
+    result = await _do_create(
+        title="Maybe vulnerable",
+        description="Something looks off.",
+        impact="Could be bad.",
+        target="https://app.example.com",
+        technical_analysis="The endpoint returned an unusual response.",
+        poc_description="Looked at it.",
+        poc_script_code="N/A",
+        remediation_steps="Investigate further.",
+        evidence="likely vulnerable",
+        assumptions="Assumes an attacker.",
+        fix_effort="low",
+        cvss_breakdown=_CVSS,
+        endpoint=None,
+        method=None,
+        cve=None,
+        cwe=None,
+        code_locations=None,
+    )
+    assert result["success"] is False
+    joined = " ".join(result["errors"])
+    assert "evidence" in joined
+    assert "poc_script_code" in joined
     assert not report_state.vulnerability_reports
 
 

@@ -359,6 +359,37 @@ async def create_todo(ctx: RunContextWrapper, todos: str) -> str:
     )
 
 
+def seed_todos(agent_id: str, todos: list[dict[str, Any]]) -> int:
+    """Seed todos for *agent_id*, skipping any whose title already exists.
+
+    Direct store access (no FunctionTool ctx) for bootstrapping a fixed
+    checklist idempotently — re-seeding the same titles is a no-op, so
+    it's safe to call on every server start. Returns the count created.
+    """
+    agent_todos = _get_agent_todos(agent_id)
+    seen = {todo["title"].strip().lower() for todo in agent_todos.values()}
+    created = 0
+    for task in todos:
+        title = str(task.get("title", "")).strip()
+        if not title or title.lower() in seen:
+            continue
+        seen.add(title.lower())
+        timestamp = datetime.now(UTC).isoformat()
+        agent_todos[str(uuid.uuid4())[:6]] = {
+            "title": title,
+            "description": (task.get("description") or "").strip() or None,
+            "priority": _coerce_priority(task.get("priority")),
+            "status": "pending",
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "completed_at": None,
+        }
+        created += 1
+    if created:
+        _persist()
+    return created
+
+
 @function_tool(timeout=30)
 async def list_todos(
     ctx: RunContextWrapper,

@@ -4,18 +4,28 @@ Strix is an open-source autonomous AI pentesting tool. This file is for AI codin
 
 ## Using Strix from an agent
 
-Install the agent skills for step-by-step workflows:
+**This fork (no Docker, no API key):** you are the pentester. Start the MCP server and file findings through it.
 
 ```bash
-npx skills add usestrix/strix
+uv run --directory "/Users/samyar/Github Local/strix" strix mcp
 ```
 
-- `penetration-testing-with-strix` — run a headless pentest against code, URLs, domains, or IPs and read results (covers both run modes below)
+Cursor already has `.cursor/mcp.json` in this repo. Claude Code / Codex: point an MCP server at that same command. Then: `list_skills` → `load_skill` → use your own shell/browser → `create_vulnerability_report`. Artifacts land in `strix_runs/mcp/` (or `--run-name`).
+
+The autonomous `strix -n` scan loop still needs Docker + `STRIX_LLM`. Do not start that path unless the user asks for it.
+
+Install the agent skills for step-by-step workflows (from this checkout, not upstream):
+
+```bash
+npx skills add . -g -a cursor -a claude-code -a codex -y
+```
+
+- `penetration-testing-with-strix` — MCP-first local pentest (this fork) plus the optional Docker/cloud paths
 - `managed-pentesting-with-strix` — drive the managed app.strix.ai platform via REST (no local Docker/LLM needed)
 - `fix-security-vulnerabilities-with-strix` — remediate findings and re-run Strix to verify
 - `ci-security-scanning-with-strix` — add PR scanning to CI/CD (self-hosted CLI or managed app)
 
-**Two ways to run, same engine — pick per situation:**
+**Two other ways to run (need infra this fork is trying to avoid):**
 
 - **Open-source CLI (self-hosted):** free, fully local, BYO LLM key, needs Docker. Best for local dev loops, air-gapped/offline, and full control.
   ```bash

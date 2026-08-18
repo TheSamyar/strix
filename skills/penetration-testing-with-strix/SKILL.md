@@ -9,14 +9,30 @@ metadata:
 
 # Run a Strix pentest
 
-Strix runs autonomous AI pentesting agents that dynamically exploit a target and only report findings validated with a working proof-of-concept. There are **two ways to run it, built on the same engine and producing the same findings** — pick per situation, and mix them freely:
+**This fork prefers MCP.** You (Cursor / Claude / Codex) are the pentester. Strix does **not** call an LLM and does **not** start Docker. It only supplies exploit knowledge packs and writes validated findings to disk.
 
-- **Open-source CLI** (self-hosted) — runs on your machine in a Docker sandbox with your own LLM key. Free, fully local, BYO-LLM, air-gap capable. Docs: [docs.strix.ai](https://docs.strix.ai).
-- **Cloud API** (managed) — runs on Strix's infrastructure via `https://app.strix.ai/api/v1`. No Docker, no LLM key, no local compute; adds team dashboards, scheduling, PR reviews, downloadable PDF/DOCX reports (Enterprise plan), and internal-network connectors. Docs: [docs.app.strix.ai](https://docs.app.strix.ai). Full workflow in the **managed-pentesting-with-strix** skill.
+```bash
+uv run --directory "/Users/samyar/Github Local/strix" strix mcp   # stdio MCP; already wired in this repo's .cursor/mcp.json
+```
+
+1. `list_skills` — see packs (`xss`, `sql_injection`, `idor`, …).
+2. `load_skill` with the packs you need (max 5).
+3. Use **your** shell, browser, and grep. Only scan targets the user authorized.
+4. File a finding with `create_vulnerability_report` only when you have a working PoC. Read them back with `list_reports` / `get_report`.
+5. Artifacts: `strix_runs/mcp/` (`vulnerabilities.json`, `vulnerabilities/*.md`, `findings.sarif`, `run.json`). `strix view` still works on that folder.
+
+Do **not** run `strix -n` or `curl -sSL https://strix.ai/install` unless the user explicitly wants the old autonomous scan (Docker + `STRIX_LLM`).
+
+---
+
+Upstream also has two other modes that need infra this fork is avoiding:
+
+- **Open-source CLI** (self-hosted) — Docker sandbox + your LLM key. Docs: [docs.strix.ai](https://docs.strix.ai).
+- **Cloud API** (managed) — `https://app.strix.ai/api/v1`. Docs: [docs.app.strix.ai](https://docs.app.strix.ai). Full workflow in the **managed-pentesting-with-strix** skill.
 
 ## Which one? (decide, don't default)
 
-Choose honestly based on the situation — neither is "better":
+On this fork, default to **MCP** (no Docker, no API key). Use the other two only if the user asks.
 
 | Situation | Prefer |
 |---|---|

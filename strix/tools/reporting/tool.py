@@ -147,6 +147,95 @@ def _calculate_cvss(breakdown: dict[str, str]) -> tuple[float, str, str]:
     return score, severity, vector
 
 
+# Referee gate for dynamic (PoC-backed) findings. The required-field check only
+# proves a field is non-empty; this proves it carries *reproduction evidence*, so
+# the client can't file speculative findings with plausible-sounding prose.
+#
+# Tunables (raise to be stricter, lower to false-reject fewer real PoCs):
+_MIN_EVIDENCE_CHARS = 40  # a one-liner is a hand-wave, not proof
+_MIN_POC_CHARS = 40
+
+# Clearly-placeholder / hedge evidence — matched against the whole stripped,
+# lowercased field, so it can't reject legitimate prose that merely contains one
+# of these words. Keep short and unambiguous.
+_PLACEHOLDER_EVIDENCE = frozenset(
+    {
+        "n/a",
+        "na",
+        "none",
+        "todo",
+        "tbd",
+        "see above",
+        "not applicable",
+        "unable to reproduce",
+        "likely vulnerable",
+        "should be vulnerable",
+        "would be vulnerable",
+    }
+)
+
+# At least one of these concrete reproduction markers must appear somewhere in
+# evidence+poc. Any single hit passes — this is a floor, not a rubric.
+_ARTIFACT_MARKERS = (
+    r"\b(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+/",  # HTTP request line
+    r"HTTP/\d",  # HTTP status/version line
+    r"^\s*HTTP\s+[1-5]\d\d\b",  # bare status line
+    r"\b(?:curl|wget|httpie|nc|python3?)\b",  # PoC invocation
+    r"^\s*(?:Host|Content-Type|Authorization|Set-Cookie|Location):",  # headers
+    r"```",  # fenced code block (payload/HTTP excerpt)
+    r"<script|\bunion\s+select\b|'\s*or\s*'|\.\./|\$\{|<\?php|{{.*}}",  # payloads
+    r"\b[\w./-]+\.[A-Za-z0-9]+:\d+\b",  # file:line source->sink trace ref
+)
+_ARTIFACT_MARKER_RE = re.compile("|".join(_ARTIFACT_MARKERS), re.IGNORECASE | re.MULTILINE)
+
+
+def _validate_reproduction_evidence(
+    evidence: str, poc_script_code: str, poc_description: str
+) -> list[str]:
+    """Reject dynamic findings that lack concrete reproduction proof.
+
+    Conservative referee: only flags clearly-unproven findings (too short,
+    placeholder text, or no reproduction artifact at all). A genuine PoC with a
+    request/response, curl command, or code trace passes.
+    """
+    errors: list[str] = []
+    evidence = (evidence or "").strip()
+    poc_script_code = (poc_script_code or "").strip()
+
+    # Empty is already caught by _REQUIRED_FIELDS; only add substance errors here.
+    if evidence and len(evidence) < _MIN_EVIDENCE_CHARS:
+        errors.append(
+            f"evidence is too thin ({len(evidence)} chars) to be proof — include the "
+            "actual request/response excerpt, tool output, or observed behavior that "
+            "demonstrates the finding, not a one-line summary."
+        )
+    if poc_script_code and len(poc_script_code) < _MIN_POC_CHARS:
+        errors.append(
+            f"poc_script_code is too thin ({len(poc_script_code)} chars) — provide the "
+            "actual exploit/payload/command that reproduces the issue."
+        )
+
+    if evidence.lower() in _PLACEHOLDER_EVIDENCE:
+        errors.append(
+            "evidence is a placeholder/hedge, not proof — replace it with a concrete "
+            "request/response, PoC output, or code trace that shows the finding is real."
+        )
+
+    # Only demand an artifact marker once there is enough text to look for one in;
+    # the substance errors above already cover the too-short case.
+    combined = f"{evidence}\n{poc_script_code}"
+    has_substance = len(evidence) >= _MIN_EVIDENCE_CHARS or len(poc_script_code) >= _MIN_POC_CHARS
+    if has_substance and not _ARTIFACT_MARKER_RE.search(combined):
+        errors.append(
+            "no concrete reproduction artifact found in evidence/poc_script_code — "
+            "include at least one of: an HTTP request/response (e.g. `GET /path`, an "
+            "`HTTP/1.1` status line, request headers), a PoC command (`curl ...`), a "
+            "fenced code block with the payload, or a `file:line` source-to-sink code "
+            "trace for white-box findings. Prose alone is not a PoC."
+        )
+    return errors
+
+
 _REQUIRED_FIELDS = {
     "title": "Title cannot be empty",
     "description": "Description cannot be empty",
@@ -202,6 +291,12 @@ async def _do_create(  # noqa: PLR0912
     for name, msg in _REQUIRED_FIELDS.items():
         if not str(fields.get(name) or "").strip():
             errors.append(msg)
+
+    # Referee gate: non-empty is not the same as proven. Require real
+    # reproduction evidence for dynamic findings (not applied to dependency CVEs).
+    errors.extend(
+        _validate_reproduction_evidence(evidence, poc_script_code, poc_description)
+    )
 
     fix_effort = (fix_effort or "").strip().lower()
     if fix_effort not in _VALID_FIX_EFFORT:
