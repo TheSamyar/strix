@@ -4,6 +4,7 @@ import contextlib
 import importlib
 import json
 import os
+import shutil
 import signal
 import stat
 import sys
@@ -180,6 +181,49 @@ def test_isolation_codex_git_uses_detach(tmp_path: Path) -> None:
     assert "--detach" in codex_worktree_argv(plan.worktree)
 
 
+def test_run_jobs_codex_worktree_is_outside_target_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = tmp_path / "app"
+    (app / ".git").mkdir(parents=True)
+    fake = tmp_path / "codex"
+    fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    added: list[Path] = []
+
+    def fake_run(argv: list[str], **_kwargs: object) -> object:
+        if "add" in argv:
+            path = Path(argv[-2])
+            path.mkdir(parents=True)
+            added.append(path)
+        elif "remove" in argv:
+            path = Path(argv[-1])
+            shutil.rmtree(path, ignore_errors=True)
+        return audit_mod.subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(audit_mod.subprocess, "run", fake_run)
+    run_jobs(
+        [AuditJob("recon", "Recon specialist", ("asset_discovery",), "Map it.")],
+        agent="codex",
+        binary=str(fake),
+        targets_info=[
+            {
+                "type": "local_code",
+                "details": {"target_path": str(app)},
+                "original": str(app),
+            }
+        ],
+        original_cwd=app,
+        parent=app / "strix_runs" / "codex",
+        instruction="",
+        max_workers=1,
+        timeout=10,
+    )
+
+    assert len(added) == 1
+    assert not added[0].is_relative_to(app)
+
+
 def test_isolation_claude_has_no_diy_worktree(tmp_path: Path) -> None:
     src = tmp_path / "src"
     plan = plan_isolation("claude", "recon", src, tmp_path, tmp_path / "wt", is_git=True)
@@ -270,6 +314,11 @@ def test_run_name_rejects_dotdot() -> None:
         parse_audit_args(["-t", "./", "--run-name", "../escape"])
 
 
+def test_run_name_rejects_absolute_path() -> None:
+    with pytest.raises(SystemExit):
+        parse_audit_args(["-t", "./", "--run-name", "/tmp/escape"])  # noqa: S108
+
+
 def test_main_audit_help_never_parses_scan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -357,6 +406,49 @@ def test_run_jobs_cursor_restores_workspace_mcp(
     assert not (cursor_dir / ".mcp.json.strix-audit.bak").exists()
 
 
+def test_run_jobs_cursor_restores_workspace_mcp_when_write_is_interrupted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = tmp_path / "app"
+    (app / ".git").mkdir(parents=True)
+    cursor_path = app / ".cursor" / "mcp.json"
+    cursor_path.parent.mkdir()
+    original = '{"mcpServers":{"existing":{}}}'
+    cursor_path.write_text(original, encoding="utf-8")
+    original_write_text = Path.write_text
+
+    def interrupt_after_write(
+        path: Path, data: str, encoding: str | None = None, **kwargs: object
+    ) -> int:
+        written = original_write_text(path, data, encoding=encoding, **kwargs)
+        if path == cursor_path and data != original:
+            raise KeyboardInterrupt
+        return written
+
+    monkeypatch.setattr(Path, "write_text", interrupt_after_write)
+    with pytest.raises(KeyboardInterrupt):
+        run_jobs(
+            [AuditJob("recon", "Recon specialist", ("asset_discovery",), "Map it.")],
+            agent="cursor",
+            binary="cursor-agent",
+            targets_info=[
+                {
+                    "type": "local_code",
+                    "details": {"target_path": str(app)},
+                    "original": str(app),
+                }
+            ],
+            original_cwd=tmp_path,
+            parent=tmp_path / "strix_runs" / "cursor-interrupt",
+            instruction="",
+            max_workers=1,
+            timeout=10,
+        )
+
+    assert cursor_path.read_text(encoding="utf-8") == original
+    assert not cursor_path.with_name(".mcp.json.strix-audit.bak").exists()
+
+
 def test_run_jobs_kills_sequential_worker_on_keyboard_interrupt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -407,7 +499,7 @@ def test_run_jobs_kills_sequential_worker_on_keyboard_interrupt(
                 os.killpg(pid, signal.SIGKILL)
 
 
-def test_run_jobs_does_not_spawn_parallel_worker_after_keyboard_interrupt(
+def test_run_jobs_kills_parallel_worker_spawned_during_keyboard_interrupt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app = tmp_path / "app"
@@ -473,4 +565,115 @@ def test_run_jobs_does_not_spawn_parallel_worker_after_keyboard_interrupt(
         )
 
     assert time.monotonic() - started < 2
-    assert len(spawned) == 1
+    assert len(spawned) == 2
+    assert all(proc.poll() is not None for proc in spawned)
+
+
+def test_run_jobs_kills_process_when_interrupt_arrives_during_popen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = tmp_path / "app"
+    (app / ".git").mkdir(parents=True)
+    communicated = False
+    killed = False
+
+    class FakeProcess:
+        pid = 12345
+        returncode = 1
+
+        def poll(self) -> int | None:
+            return self.returncode if killed else None
+
+        def communicate(self, timeout: int | None = None) -> None:
+            del timeout
+            nonlocal communicated
+            communicated = True
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def interrupting_popen(*_args: object, **_kwargs: object) -> FakeProcess:
+        audit_mod._interrupted.set()
+        return FakeProcess()
+
+    def fake_killpg(_pid: int, _sig: int) -> None:
+        nonlocal killed
+        killed = True
+
+    monkeypatch.setattr(audit_mod.subprocess, "Popen", interrupting_popen)
+    monkeypatch.setattr(audit_mod.os, "killpg", fake_killpg)
+    results, _ = run_jobs(
+        [AuditJob("recon", "Recon specialist", ("asset_discovery",), "Map it.")],
+        agent="claude",
+        binary="claude",
+        targets_info=[
+            {
+                "type": "local_code",
+                "details": {"target_path": str(app)},
+                "original": str(app),
+            }
+        ],
+        original_cwd=tmp_path,
+        parent=tmp_path / "strix_runs" / "atomic-spawn",
+        instruction="",
+        max_workers=1,
+        timeout=10,
+    )
+
+    assert results == [JobResult("recon", 1, timed_out=False)]
+    assert killed
+    assert not communicated
+
+
+def test_run_jobs_popen_failure_kills_sibling_without_waiting_for_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = tmp_path / "app"
+    (app / ".git").mkdir(parents=True)
+    fake = tmp_path / "claude"
+    fake.write_text("#!/bin/sh\nexec sleep 60\n", encoding="utf-8")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    sibling_started = threading.Event()
+    spawned: list[subprocess.Popen[bytes]] = []
+    original_popen = audit_mod.subprocess.Popen
+
+    def fail_recon_popen(argv: list[str], **kwargs: object) -> subprocess.Popen[bytes]:
+        if "Recon specialist" in argv[-1]:
+            assert sibling_started.wait(2)
+            raise OSError("spawn failed")
+        proc = original_popen(argv, **kwargs)
+        spawned.append(proc)
+        sibling_started.set()
+        return proc
+
+    monkeypatch.setattr(audit_mod.subprocess, "Popen", fail_recon_popen)
+    started = time.monotonic()
+    try:
+        results, _ = run_jobs(
+            [
+                AuditJob("recon", "Recon specialist", ("asset_discovery",), "Map it."),
+                AuditJob("auth", "Auth specialist", ("csrf",), "Test it."),
+            ],
+            agent="claude",
+            binary=str(fake),
+            targets_info=[
+                {
+                    "type": "local_code",
+                    "details": {"target_path": str(app)},
+                    "original": str(app),
+                }
+            ],
+            original_cwd=tmp_path,
+            parent=tmp_path / "strix_runs" / "spawn-failure",
+            instruction="",
+            max_workers=2,
+            timeout=2,
+        )
+    finally:
+        for proc in spawned:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+
+    assert time.monotonic() - started < 1
+    assert {result.job_id for result in results} == {"recon", "auth"}
+    assert all(proc.poll() is not None for proc in spawned)

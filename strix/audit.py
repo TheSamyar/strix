@@ -11,6 +11,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -422,8 +423,10 @@ def run_jobs(  # noqa: PLR0915
     _interrupted.clear()
     local = first_local_path(targets_info)
     git = bool(local and is_git_repo(local))
-    tmp = parent / ".worktrees"
-    tmp.mkdir(parents=True, exist_ok=True)
+    worktree_root = (
+        Path(tempfile.mkdtemp(prefix="strix-audit-")) if agent == "codex" and git else None
+    )
+    tmp = worktree_root or original_cwd
     added_worktrees: list[Path] = []
     plans = {
         job.id: plan_isolation(
@@ -442,61 +445,63 @@ def run_jobs(  # noqa: PLR0915
         if _interrupted.is_set():
             return JobResult(job.id, 1, timed_out=False)
         plan = plans[job.id]
-        if plan.worktree:
-            subprocess.run(  # noqa: S603
-                codex_worktree_argv(plan.worktree),
-                cwd=local or original_cwd,
-                check=True,
-            )
-            added_worktrees.append(plan.worktree)
-            if _interrupted.is_set():
-                return JobResult(job.id, 1, timed_out=False)
-
-        worker_dir = parent / "workers" / job.id
-        worker_dir.mkdir(parents=True, exist_ok=True)
-        worker_run_name = f"{worker_run_base}/workers/{job.id}"
-        mcp = mcp_argv(str(original_cwd), worker_run_name)
-        mcp_config = write_mcp_config_json(sys.executable, mcp[1:])
-        mcp_path = worker_dir / "mcp.json"
-        mcp_path.write_text(json.dumps(mcp_config, indent=2), encoding="utf-8")
-
-        prompt = worker_prompt(job, targets_info, instruction)
         cursor_path = plan.worker_cwd / ".cursor" / "mcp.json"
         cursor_backup = cursor_path.with_name(".mcp.json.strix-audit.bak")
         restore_cursor = False
-        if agent == "claude":
-            argv = claude_argv(
-                binary,
-                prompt,
-                mcp_path,
-                worktree_name=f"strix-audit-{job.id}" if git else None,
-            )
-        elif agent == "cursor":
-            cursor_path.parent.mkdir(parents=True, exist_ok=True)
-            if cursor_path.exists():
-                shutil.copy2(cursor_path, cursor_backup)
-                restore_cursor = True
-            cursor_path.write_text(json.dumps(mcp_config, indent=2), encoding="utf-8")
-            argv = cursor_argv(binary, prompt, plan.worker_cwd)
-        else:
-            argv = codex_argv(
-                binary,
-                prompt,
-                plan.worker_cwd,
-                str(original_cwd),
-                worker_run_name,
-            )
-
+        cursor_config_touched = False
         proc: subprocess.Popen[bytes] | None = None
         try:
-            if _interrupted.is_set():
-                return JobResult(job.id, 1, timed_out=False)
+            if plan.worktree:
+                subprocess.run(  # noqa: S603
+                    codex_worktree_argv(plan.worktree),
+                    cwd=local or original_cwd,
+                    check=True,
+                )
+                added_worktrees.append(plan.worktree)
+                if _interrupted.is_set():
+                    return JobResult(job.id, 1, timed_out=False)
+
+            worker_dir = parent / "workers" / job.id
+            worker_dir.mkdir(parents=True, exist_ok=True)
+            worker_run_name = f"{worker_run_base}/workers/{job.id}"
+            mcp = mcp_argv(str(original_cwd), worker_run_name)
+            mcp_config = write_mcp_config_json(sys.executable, mcp[1:])
+            mcp_path = worker_dir / "mcp.json"
+            mcp_path.write_text(json.dumps(mcp_config, indent=2), encoding="utf-8")
+
+            prompt = worker_prompt(job, targets_info, instruction)
+            if agent == "claude":
+                argv = claude_argv(
+                    binary,
+                    prompt,
+                    mcp_path,
+                    worktree_name=f"strix-audit-{job.id}" if git else None,
+                )
+            elif agent == "cursor":
+                cursor_path.parent.mkdir(parents=True, exist_ok=True)
+                if cursor_path.exists():
+                    shutil.copy2(cursor_path, cursor_backup)
+                    restore_cursor = True
+                cursor_config_touched = True
+                cursor_path.write_text(json.dumps(mcp_config, indent=2), encoding="utf-8")
+                argv = cursor_argv(binary, prompt, plan.worker_cwd)
+            else:
+                argv = codex_argv(
+                    binary,
+                    prompt,
+                    plan.worker_cwd,
+                    str(original_cwd),
+                    worker_run_name,
+                )
+
             proc = subprocess.Popen(  # noqa: S603
                 argv,
                 cwd=plan.worker_cwd,
                 start_new_session=True,
             )
             _live_procs.append(proc)
+            if _interrupted.is_set():
+                return JobResult(job.id, 1, timed_out=False)
             try:
                 proc.communicate(timeout=timeout)
                 return JobResult(job.id, proc.returncode, timed_out=False)
@@ -505,6 +510,11 @@ def run_jobs(  # noqa: PLR0915
                     os.killpg(proc.pid, signal.SIGKILL)
                 proc.communicate()
                 return JobResult(job.id, 1, timed_out=True)
+        except (OSError, subprocess.SubprocessError):
+            logger.exception("audit worker %s failed to start", job.id)
+            _interrupted.set()
+            _kill_live_processes()
+            return JobResult(job.id, 1, timed_out=False)
         finally:
             if proc is not None and proc.poll() is None:
                 with contextlib.suppress(ProcessLookupError, PermissionError):
@@ -512,7 +522,7 @@ def run_jobs(  # noqa: PLR0915
                 proc.wait()
             if proc in _live_procs:
                 _live_procs.remove(proc)
-            if agent == "cursor":
+            if cursor_config_touched:
                 if restore_cursor:
                     shutil.move(cursor_backup, cursor_path)
                 else:
@@ -552,3 +562,5 @@ def run_jobs(  # noqa: PLR0915
                 cwd=local or original_cwd,
                 check=False,
             )
+        if worktree_root is not None:
+            shutil.rmtree(worktree_root, ignore_errors=True)

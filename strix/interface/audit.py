@@ -40,8 +40,8 @@ def parse_audit_args(argv: list[str]) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if not args.target and not args.target_list:
         parser.error("the following arguments are required: -t/--target")
-    if args.run_name and ".." in args.run_name:
-        parser.error("--run-name must not contain ..")
+    if args.run_name and (Path(args.run_name).is_absolute() or ".." in args.run_name):
+        parser.error("--run-name must be relative and must not contain ..")
     if args.max_workers < 1:
         parser.error("--max-workers must be >= 1")
     if args.timeout < 1:
