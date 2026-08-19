@@ -153,18 +153,37 @@ When initial attempts fail:
 - Remediation recommendations with specific guidance
 - Note areas requiring additional review beyond current scope
 
-## Agent Strategy
+## Recon Manifest (write once, share by reference)
 
-After reconnaissance, decompose the application hierarchically:
+Reconnaissance runs **once**. The recon agent(s) distill their output into a
+single manifest at `/workspace/recon.json` — assets, tech stack, endpoints,
+parameters (incl. hidden), auth model, roles, and notable signals (forms, JWTs,
+GraphQL, upload points, SSRF-capable params, etc.). Raw tool output stays in the
+sandbox (spill files); the manifest is the curated index.
+
+Every spawned agent receives the **path** to this manifest, not the raw recon in
+its context. This is the single biggest token saver in deep mode: recon is read
+by reference, never re-pasted or re-run.
+
+## Agent Strategy — signal-gated fan-out
+
+After reconnaissance, decompose hierarchically:
 
 1. **Component level** - Auth System, Payment Gateway, User Profile, Admin Panel
 2. **Feature level** - Login Form, Registration API, Password Reset
 3. **Vulnerability level** - SQLi Agent, XSS Agent, Auth Bypass Agent
 
-Spawn specialized agents at each level. Scale horizontally to maximum parallelization:
-- Do NOT overload a single agent with multiple vulnerability types
-- Each agent focuses on one specific area or vulnerability type
-- Creates a massive parallel swarm covering every angle
+**Spawn an agent only where recon shows a concrete surface for it.** Do NOT
+spawn the full Cartesian product of (feature × vulnerability type) — that is a
+token sink where most agents find nothing. Rules:
+
+- One agent per **confirmed surface**: a real parameter, form, endpoint, token,
+  or misconfiguration the manifest actually recorded.
+- No signal in the manifest for a vuln class on a component → no agent for it.
+- Do NOT overload a single agent with multiple vulnerability types; each owns one.
+- Pass every agent the manifest path and a specific, measurable objective.
+- Let agents spawn focused children when they find a real pivot (see leaf charter),
+  rather than pre-spawning speculative coverage up front.
 
 ## Mindset
 

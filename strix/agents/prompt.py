@@ -29,7 +29,8 @@ def _resolve_skills(
     Order:
 
     1. Whatever the caller asked for, in order.
-    2. ``scan_modes/<mode>`` (always).
+    2. ``scan_modes/<mode>`` (always) — except deep-mode leaf agents get the
+       slim ``scan_modes/deep_leaf`` charter instead of the full playbook.
     3. ``vulnerabilities/data_leakage`` for deep scans — makes data exposure
        hunting a first-class default instead of relying on broad disclosure
        coverage.
@@ -42,7 +43,13 @@ def _resolve_skills(
     7. Whitebox-specific skills if applicable.
     """
     ordered: list[str] = list(requested or [])
-    ordered.append(f"scan_modes/{scan_mode}")
+    # Deep mode: the root orchestrates (full playbook), leaf agents test one
+    # surface (slim charter). Handing the 8.8KB orchestration essay to every
+    # spawned specialist is the main deep-mode token sink.
+    if scan_mode == "deep" and not is_root:
+        ordered.append("scan_modes/deep_leaf")
+    else:
+        ordered.append(f"scan_modes/{scan_mode}")
     if scan_mode == "deep":
         ordered.append("vulnerabilities/data_leakage")
     ordered.append("tooling/agent_browser")

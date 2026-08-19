@@ -21,6 +21,9 @@ _OUTPUT_CAP_CHARS = 20_000
 # discrete elements and shell metacharacters carry no meaning.
 _ALLOWLIST: dict[str, list[str]] = {
     "nmap": ["nmap", "{target}", "{extra}"],
+    "nuclei": ["nuclei", "-u", "{target}", "{extra}"],
+    "wapiti": ["wapiti", "-u", "{target}", "{extra}"],
+    "gospider": ["gospider", "-s", "{target}", "{extra}"],
     "sqlmap": ["sqlmap", "-u", "{target}", "--batch", "{extra}"],
     "nikto": ["nikto", "-host", "{target}", "{extra}"],
     "httpx": ["httpx", "-u", "{target}", "{extra}"],
@@ -40,6 +43,11 @@ _ALLOWLIST: dict[str, list[str]] = {
     "naabu": ["naabu", "-host", "{target}", "{extra}"],
     "gau": ["gau", "{target}", "{extra}"],
     "dnsx": ["dnsx", "-d", "{target}", "{extra}"],
+    "dirsearch": ["dirsearch", "-u", "{target}", "{extra}"],
+    "wafw00f": ["wafw00f", "{target}", "{extra}"],
+    "trufflehog": ["trufflehog", "filesystem", "{target}", "{extra}"],
+    "retire": ["retire", "--path", "{target}", "{extra}"],
+    "amass": ["amass", "enum", "-d", "{target}", "{extra}"],
 }
 
 
@@ -112,19 +120,23 @@ async def run_scanner(
 ) -> str:
     """Run one allowlisted site-audit scanner against an authorized target.
 
-    Only runs scanners on a hardcoded allowlist — ``nmap``, ``sqlmap``,
+    Only runs scanners on a hardcoded allowlist — ``nmap``, ``nuclei``
+    (CVE/misconfig templates), ``wapiti`` (full web-app DAST),
+    ``gospider`` (crawler), ``sqlmap``,
     ``nikto``, ``httpx``, ``ffuf``, ``wpscan``, ``sslscan``, ``sstimap``,
     ``commix``, ``whatweb``, ``crlfuzz``, ``searchsploit``, ``hashid``,
     ``dalfox`` (XSS), ``katana`` (crawler), ``subfinder`` (subdomain
     enum), ``arjun`` (hidden-param discovery), ``naabu`` (port scan),
-    ``gau`` (known URLs), ``dnsx`` (DNS toolkit) — against targets the
+    ``gau`` (known URLs), ``dnsx`` (DNS toolkit), ``amass`` (deep
+    subdomain enum) — against targets the
     operator is authorized to test; there are no scope guardrails, the
     operator owns scope. Any other ``tool`` is rejected with a structured
     error. argv is built as a list and run without a shell, so
     ``extra_args`` are passed as discrete arguments (no shell-metacharacter
     injection). ``searchsploit`` / ``hashid`` take a query or hash in
     ``target``, not a URL; ``subfinder`` / ``gau`` / ``dnsx`` take a bare
-    domain (e.g. ``example.com``), not a URL.
+    domain (e.g. ``example.com``), not a URL. ``trufflehog`` and ``retire``
+    take a local path rather than a URL.
 
     Returns JSON with ``tool``, ``argv``, ``returncode``, ``stdout`` and
     ``stderr`` (each truncated to 20k chars), and ``timed_out``. If the tool

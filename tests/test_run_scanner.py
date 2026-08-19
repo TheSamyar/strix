@@ -103,6 +103,26 @@ def test_off_allowlist_rejected_without_subprocess(monkeypatch: pytest.MonkeyPat
         ),
         ("gau", "example.com", ["--threads", "5"], ["gau", "example.com", "--threads", "5"]),
         ("dnsx", "example.com", ["-a"], ["dnsx", "-d", "example.com", "-a"]),
+        (
+            "dirsearch",
+            "https://x",
+            ["--plain-text-report", "out.txt"],
+            ["dirsearch", "-u", "https://x", "--plain-text-report", "out.txt"],
+        ),
+        ("wafw00f", "https://x", [], ["wafw00f", "https://x"]),
+        (
+            "trufflehog",
+            "/repo",
+            ["--no-verification"],
+            ["trufflehog", "filesystem", "/repo", "--no-verification"],
+        ),
+        ("retire", "/repo", [], ["retire", "--path", "/repo"]),
+        (
+            "amass",
+            "example.com",
+            ["-passive"],
+            ["amass", "enum", "-d", "example.com", "-passive"],
+        ),
     ],
 )
 def test_argv_built_as_list_never_shell(

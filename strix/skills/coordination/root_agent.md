@@ -60,12 +60,24 @@ Create agents with minimal dependencies. Parallel execution is faster than seque
 
 Each agent should have a specific, measurable goal. Vague objectives lead to scope creep and redundant work.
 
-**Avoid Duplication**
+**Recon manifest — share by reference**
+
+Recon runs once. Have your recon agent(s) write a curated manifest to
+`/workspace/recon.json` (assets, tech, endpoints, params, auth model, signals).
+Pass every downstream agent the **path** to that file — never paste raw recon or
+scanner output into agent objectives, and never have agents re-run recon. Raw
+tool output already spills to sandbox files; the manifest is the shared index.
+
+**Signal-gated fan-out — avoid duplication and speculative swarms**
 
 Before creating agents:
 1. Analyze the target scope and break into independent tasks
 2. Check existing agents to avoid overlap
 3. Create agents with clear, specific objectives
+4. Spawn an agent only where the manifest shows a concrete surface for it. Do
+   NOT spawn the full (feature × vulnerability-type) product — most such agents
+   find nothing and each pays a full system prompt. One agent per confirmed
+   surface; let agents spawn focused children when they find a real pivot.
 
 **Hierarchical Delegation**
 
