@@ -35,6 +35,7 @@ from strix.tools.auth_crawl.tools import auth_crawl
 from strix.tools.auth_probe.tools import session_invalidation_probe
 from strix.tools.authz_matrix.tools import authz_matrix
 from strix.tools.authz_probe.tools import authz_probe
+from strix.tools.autopwn.tools import autopwn, verify_finding
 from strix.tools.backend_rules_probe.tools import backend_rules_probe
 from strix.tools.cache_privacy.tools import cache_privacy_probe
 from strix.tools.chain_suggest.tools import suggest_chains
@@ -248,6 +249,8 @@ stop."""
 # return a clear error when none is reachable.
 _HOST_TOOLS: tuple[FunctionTool, ...] = (
     load_skill,
+    autopwn,
+    verify_finding,
     profile_target,
     plan_tests,
     endpoint_risk_rank,

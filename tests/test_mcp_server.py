@@ -115,6 +115,8 @@ def test_tools_list_includes_skill_and_report_tools() -> None:
         "mfa_bypass",
         "header_leak",
         "ws_leak",
+        "autopwn",
+        "verify_finding",
     } <= names
     assert "create_agent" not in names
     assert "finish_scan" not in names
