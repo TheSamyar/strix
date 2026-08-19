@@ -156,12 +156,12 @@ def _do_scope_coverage(target_type: str) -> dict[str, object]:
     todos = coverage_todos(MCP_AGENT_ID, COVERAGE_MARKER)
 
     if normalized in ("", "all") or normalized not in _RELEVANCE:
-        kept = sorted(_pack_name(str(t.get("title", ""))) or "" for t in todos)
+        kept_all = sorted(_pack_name(str(t.get("title", ""))) or "" for t in todos)
         return {
             "success": True,
             "target_type": normalized or "all",
-            "kept": [k for k in kept if k],
-            "kept_count": len(kept),
+            "kept": [k for k in kept_all if k],
+            "kept_count": len(kept_all),
             "removed": [],
             "removed_count": 0,
             "note": "unknown/all target type — kept all classes"

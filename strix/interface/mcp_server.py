@@ -160,7 +160,7 @@ from strix.tools.ws_probe.tools import ws_probe
 
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from agents.tool import FunctionTool
 
@@ -786,7 +786,7 @@ def handle_message(msg: Mapping[str, Any]) -> dict[str, Any] | None:
         return _rpc_error(msg, -32600, "Invalid Request")
     if method.startswith("notifications/"):
         return None
-    handlers: dict[str, Any] = {
+    handlers: dict[str, Callable[[], dict[str, Any]]] = {
         "initialize": lambda: _rpc_result(msg, _initialize_result()),
         "ping": lambda: _rpc_result(msg, {}),
         "tools/list": lambda: _rpc_result(msg, {"tools": mcp_tool_descriptors()}),
@@ -824,7 +824,10 @@ def _read_lsp_body(first_line: bytes) -> dict[str, Any] | None:
     except ValueError:
         length = 0
     raw = sys.stdin.buffer.read(length) if length > 0 else b""
-    return json.loads(raw) if raw else None
+    if not raw:
+        return None
+    parsed = json.loads(raw)
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _read_message() -> dict[str, Any] | None:
@@ -836,7 +839,8 @@ def _read_message() -> dict[str, Any] | None:
     if not stripped:
         return _read_message()
     if stripped[:1] in {b"{", b"["}:
-        return json.loads(stripped)
+        parsed = json.loads(stripped)
+        return parsed if isinstance(parsed, dict) else None
     return _read_lsp_body(line)
 
 
@@ -910,8 +914,6 @@ async def _serve_stdio_async() -> int:
         msg = await queue.get()
         if msg is None:
             break
-        if not isinstance(msg, dict):
-            continue
         if msg.get("method") == "tools/call":
             task = asyncio.create_task(_dispatch_tool_call(msg))
             pending.add(task)

@@ -61,10 +61,10 @@ def hydrate_attack_surface_from_disk(state_dir: Path) -> None:
             return
         if not isinstance(data, dict):
             return
-        for section in ("endpoints", "roles", "matrix"):
-            loaded = data.get(section)
+        for name in ("endpoints", "roles", "matrix"):
+            loaded = data.get(name)
             if isinstance(loaded, dict):
-                _store[section].update(
+                _store[name].update(
                     {k: v for k, v in loaded.items() if isinstance(k, str) and isinstance(v, dict)}
                 )
         logger.info(
