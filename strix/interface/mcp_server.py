@@ -86,6 +86,12 @@ from strix.tools.load_skill.tool import load_skill
 from strix.tools.local_scan.tools import local_security_scan
 from strix.tools.mass_assignment.tools import mass_assignment_probe
 from strix.tools.mcp_audit.tools import mcp_tool_poisoning_audit
+from strix.tools.mcp_catalog import (
+    advertised_host_names,
+    apply_load_tool,
+    reset_advertised_tools,
+    search_catalog,
+)
 from strix.tools.mfa_bypass.tools import mfa_bypass
 from strix.tools.nosql_probe.tools import nosql_probe
 from strix.tools.notes.tools import (
@@ -199,6 +205,10 @@ You are the pentester. Drive this yourself with your own shell, browser, grep, \
 and HTTP tooling. Only test targets you are authorized to test. Work the phases \
 below in order and do not stop early.
 
+tools/list is a small core (profile, plan, reports, todos, coverage). Specialist \
+probes (cors_probe, injection_fuzz, ssrf_probe, …) are on-demand: call \
+search_tools then load_tool so their schema appears before you use them.
+
 1. PROFILE, THEN HARVEST — first call profile_target on the seed URL and pass \
 its result to plan_tests: that fingerprints the stack (framework, Supabase/\
 Firebase, GraphQL, JWT, WordPress, …) and seeds a tailored [plan] checklist so \
@@ -260,8 +270,9 @@ the packs named in your job prompt, prove exploits before filing, and call \
 create_vulnerability_report only for validated findings. Include actual \
 leaked values in evidence; do not redact findings. Operator-supplied scan \
 auth stays secret. Coverage todos are not seeded — do not try to cover \
-every vulnerability class. Do not spawn sub-agents. When the job is done, \
-stop."""
+every vulnerability class. Do not spawn sub-agents. If you need a specialist \
+probe that is not in tools/list, search_tools then load_tool. When the job is \
+done, stop."""
 
 # Host-safe tools only. Shell/browser stay with the coding agent. The Caido
 # proxy tools self-connect to a caido-cli the host runs (STRIX_CAIDO_URL) and
@@ -396,9 +407,38 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     scope_rules,
 )
 
+_LIST_SKILLS_DESCRIPTION = (
+    "List Strix pentest knowledge packs (xss, sql_injection, idor, …) "
+    "grouped by category. Call load_skill next to read a pack."
+)
 _LIST_SKILLS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {},
+    "additionalProperties": False,
+}
+_SEARCH_TOOLS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "query": {
+            "type": "string",
+            "description": "Case-insensitive substring matched against tool name and description.",
+        },
+    },
+    "required": ["query"],
+    "additionalProperties": False,
+}
+_LOAD_TOOL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "names": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Host tool names to add to this session's advertised set (max 20 extra)."
+            ),
+        },
+    },
+    "required": ["names"],
     "additionalProperties": False,
 }
 
@@ -418,15 +458,29 @@ def _clip_desc(text: str) -> str:
 
 
 def mcp_tool_descriptors() -> list[dict[str, Any]]:
+    advertised = advertised_host_names()
     tools = [
         {
             "name": "list_skills",
-            "description": (
-                "List Strix pentest knowledge packs (xss, sql_injection, idor, …) "
-                "grouped by category. Call load_skill next to read a pack."
-            ),
+            "description": _LIST_SKILLS_DESCRIPTION,
             "inputSchema": _LIST_SKILLS_SCHEMA,
-        }
+        },
+        {
+            "name": "search_tools",
+            "description": (
+                "Substring-search the full host tool catalog (name + description). "
+                "Returns up to 25 matches. Call load_tool to attach a match to tools/list."
+            ),
+            "inputSchema": _SEARCH_TOOLS_SCHEMA,
+        },
+        {
+            "name": "load_tool",
+            "description": (
+                "Add specialist host tools to this session's tools/list (max 20 extra). "
+                "Unknown names are reported; known names still load."
+            ),
+            "inputSchema": _LOAD_TOOL_SCHEMA,
+        },
     ]
     tools.extend(
         {
@@ -435,6 +489,7 @@ def mcp_tool_descriptors() -> list[dict[str, Any]]:
             "inputSchema": tool.params_json_schema,
         }
         for tool in _HOST_TOOLS
+        if tool.name in advertised
     )
     return tools
 
@@ -445,6 +500,7 @@ def bootstrap_mcp_run(
     seed_coverage: bool = True,
 ) -> ReportState:
     """Create (or reuse) the on-disk run so findings persist without a scan loop."""
+    reset_advertised_tools()
     _runtime_options["seed_coverage"] = seed_coverage
     existing = get_global_report_state()
     if existing is not None:
@@ -499,8 +555,7 @@ def _seed_data_leak_todos() -> None:
                 "workspaces, objects, files, exports, prompts, logs, and caches"
             ),
             "description": (
-                "Build a data-flow and identity-boundary map before broad "
-                "vuln-class testing."
+                "Build a data-flow and identity-boundary map before broad vuln-class testing."
             ),
         },
         {
@@ -509,8 +564,7 @@ def _seed_data_leak_todos() -> None:
                 "endpoints across wrong users or tenants"
             ),
             "description": (
-                "Compare status, body digest, leaked fields, object IDs, "
-                "and cache headers."
+                "Compare status, body digest, leaked fields, object IDs, and cache headers."
             ),
         },
         {
@@ -570,9 +624,7 @@ def _initialize_result() -> dict[str, Any]:
         },
         "serverInfo": {"name": "strix", "version": get_version()},
         "instructions": (
-            MCP_INSTRUCTIONS
-            if _runtime_options["seed_coverage"]
-            else SPECIALIST_MCP_INSTRUCTIONS
+            MCP_INSTRUCTIONS if _runtime_options["seed_coverage"] else SPECIALIST_MCP_INSTRUCTIONS
         ),
     }
 
@@ -616,9 +668,47 @@ def _audit_log(
         logger.debug("MCP audit write failed", exc_info=True)
 
 
+def _full_tool_catalog() -> list[tuple[str, str]]:
+    entries = [("list_skills", _LIST_SKILLS_DESCRIPTION)]
+    entries.extend((tool.name, tool.description or "") for tool in _HOST_TOOLS)
+    return entries
+
+
+def _search_tools_payload(arguments: dict[str, Any]) -> dict[str, Any]:
+    query = arguments.get("query", "")
+    if not isinstance(query, str):
+        query = str(query)
+    hits = search_catalog(query, _full_tool_catalog())
+    return {
+        "success": True,
+        "tools": [
+            {"name": hit["name"], "description": _clip_desc(hit["description"])} for hit in hits
+        ],
+    }
+
+
+def _load_tool_payload(arguments: dict[str, Any]) -> dict[str, Any]:
+    raw = arguments.get("names", [])
+    names = [item for item in raw if isinstance(item, str)] if isinstance(raw, list) else []
+    known = {"list_skills", "search_tools", "load_tool"} | {tool.name for tool in _HOST_TOOLS}
+    loaded, errors = apply_load_tool(names, known)
+    payload: dict[str, Any] = {
+        "success": True,
+        "loaded": loaded,
+        "advertised_count": len(mcp_tool_descriptors()),
+    }
+    if errors:
+        payload["errors"] = errors
+    return payload
+
+
 async def _run_host_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     if name == "list_skills":
         return _tool_result(json.dumps(get_available_skills(), indent=2))
+    if name == "search_tools":
+        return _tool_result(json.dumps(_search_tools_payload(arguments)))
+    if name == "load_tool":
+        return _tool_result(json.dumps(_load_tool_payload(arguments)))
     tool = _tool_by_name().get(name)
     if tool is None:
         return _tool_result(f"Unknown tool: {name}", is_error=True)
@@ -991,8 +1081,7 @@ def run_mcp(argv: list[str]) -> int:
         "--no-seed",
         action="store_true",
         help=(
-            "Skip vuln-class coverage todos; specialist instructions "
-            "(used by strix audit workers)."
+            "Skip vuln-class coverage todos; specialist instructions (used by strix audit workers)."
         ),
     )
     args = parser.parse_args(argv)

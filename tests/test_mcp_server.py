@@ -26,6 +26,13 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+@pytest.fixture(autouse=True)
+def reset_advertised_tools() -> Iterator[None]:
+    mcp_server.reset_advertised_tools()
+    yield
+    mcp_server.reset_advertised_tools()
+
+
 @pytest.fixture
 def mcp_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.chdir(tmp_path)
@@ -59,6 +66,8 @@ def test_initialize_advertises_strix() -> None:
     assert "data_leakage" in result["instructions"]
     assert "do not redact" in result["instructions"]
     assert "loot" in result["instructions"]
+    assert "search_tools" in result["instructions"]
+    assert "load_tool" in result["instructions"]
 
 
 def test_tools_list_includes_skill_and_report_tools() -> None:
@@ -66,72 +75,64 @@ def test_tools_list_includes_skill_and_report_tools() -> None:
     assert {
         "list_skills",
         "load_skill",
+        "search_tools",
+        "load_tool",
         "create_vulnerability_report",
         "list_reports",
         "get_report",
-        "executive_summary",
-    } <= names
-    assert {"authz_probe", "dedupe_reports", "retest_findings"} <= names
-    assert {"cors_probe", "rate_limit_probe", "graphql_introspection", "jwt_audit"} <= names
-    assert {"backend_rules_probe", "frontend_secret_scan"} <= names
-    assert {"oast_get_domain", "oast_poll", "mcp_tool_poisoning_audit"} <= names
-    assert {"profile_target", "plan_tests", "endpoint_risk_rank"} <= names
-    assert {"race_probe", "session_invalidation_probe"} <= names
-    assert {"injection_fuzz", "prompt_injection_probe"} <= names
-    assert {
-        "auth_crawl",
-        "suggest_chains",
-        "cache_deception_probe",
-        "request_smuggling_probe",
-    } <= names
-    assert {"graphql_abuse", "coverage_gaps"} <= names
-    assert {
-        "ssr_leak_scan",
-        "data_exposure_probe",
-        "storage_probe",
-        "cache_privacy_probe",
-        "user_enumeration_probe",
-        "mass_assignment_probe",
-        "redirect_probe",
-        "security_headers_probe",
-        "deep_fuzz",
-        "param_discover",
-        "content_discover",
-        "authz_matrix",
-        "stored_probe",
-        "error_leak_probe",
-        "sourcemap_recover",
-        "signed_url_probe",
-        "jwt_confusion",
-        "session_fixation_probe",
-        "reset_token_probe",
-        "oauth_probe",
-        "dos_probe",
-        "csrf_probe",
-        "default_creds",
-        "subdomain_takeover",
-        "graphql_field_leak",
-        "graphql_dos",
-        "upload_probe",
-        "mfa_bypass",
-        "header_leak",
-        "ws_leak",
-        "autopwn",
-        "verify_finding",
+        "profile_target",
+        "check_tools",
+        "coverage_gaps",
+        "dedupe_reports",
+        "retest_findings",
+        "web_search",
     } <= names
     assert "create_agent" not in names
     assert "finish_scan" not in names
-    assert {
-        "start_listener",
-        "list_shells",
-        "shell_exec",
-        "read_shell",
-        "upgrade_pty",
-        "loot",
-        "privesc_scan",
-        "pivot_scan",
-        "close_shell",
-    } <= names
+    assert "cors_probe" not in names
+    assert "injection_fuzz" not in names
+    assert "ssrf_probe" not in names
+
+
+def _tool_payload(name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+    params: dict[str, Any] = {"name": name}
+    if arguments is not None:
+        params["arguments"] = arguments
+    result = _call("tools/call", params)["result"]
+    return json.loads(result["content"][0]["text"])
+
+
+def test_search_tools_finds_cors_probe() -> None:
+    payload = _tool_payload("search_tools", {"query": "cors"})
+    assert payload["success"] is True
+    names = {tool["name"] for tool in payload["tools"]}
+    assert "cors_probe" in names
+    assert len(payload["tools"]) <= 25
+
+
+def test_load_tool_advertises_cors_probe() -> None:
+    payload = _tool_payload("load_tool", {"names": ["cors_probe"]})
+    assert payload["success"] is True
+    assert "cors_probe" in payload["loaded"]
+    names = {tool["name"] for tool in mcp_tool_descriptors()}
+    assert "cors_probe" in names
+    assert payload["advertised_count"] == len(names)
+
+
+def test_tools_call_cors_probe_works_before_load() -> None:
+    result = _call("tools/call", {"name": "cors_probe", "arguments": {"url": ""}})["result"]
+    text = result["content"][0]["text"]
+    assert "Unknown tool" not in text
+    payload = json.loads(text)
+    assert payload["success"] is False
+
+
+def test_load_tool_unknown_names_still_loads_known() -> None:
+    payload = _tool_payload("load_tool", {"names": ["cors_probe", "not_a_real_tool"]})
+    assert "cors_probe" in payload["loaded"]
+    assert payload["errors"]
+    names = {tool["name"] for tool in mcp_tool_descriptors()}
+    assert "cors_probe" in names
 
 
 @pytest.mark.usefixtures("mcp_run")

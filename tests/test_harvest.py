@@ -36,7 +36,11 @@ from strix.harvest import (
     walk_unauth,
     write_walk_jsonl,
 )
-from strix.interface.mcp_server import bootstrap_mcp_run, mcp_tool_descriptors
+from strix.interface.mcp_server import (
+    bootstrap_mcp_run,
+    mcp_tool_descriptors,
+    reset_advertised_tools,
+)
 from strix.tools.attack_surface import tools as attack_surface
 from strix.tools.coverage.tools import _do_coverage_report
 
@@ -409,10 +413,13 @@ def test_run_harvest_writes_artifacts(tmp_path: Path) -> None:
 
 
 def test_mcp_lists_discover_and_walk() -> None:
+    reset_advertised_tools()
     names = {tool["name"] for tool in mcp_tool_descriptors()}
-    assert "discover_assets" in names
-    assert "walk_unauth" in names
     assert "check_tools" in names
+    assert "search_tools" in names
+    assert "load_tool" in names
+    assert "discover_assets" not in names
+    assert "walk_unauth" not in names
     for tool in mcp_tool_descriptors():
         assert len(tool["description"]) <= 400
 
