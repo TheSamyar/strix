@@ -103,6 +103,8 @@ DEFAULT_RUN_NAME = "mcp"
 COVERAGE_MARKER = "[coverage]"
 MCP_AGENT_ID = "mcp"
 
+_seed_coverage = True
+
 # Directive methodology handed to the client LLM on `initialize`. Thin guidance
 # produces shallow, ad-hoc audits; this forces recon-first, per-surface-per-class
 # coverage before the audit is called done.
@@ -139,6 +141,14 @@ and todo tools.
 5. DON'T DECLARE DONE — the audit is complete only when the coverage checklist \
 in list_todos is fully worked through (or empty) and every filed finding is \
 verified. State your coverage and any gaps honestly."""
+
+SPECIALIST_MCP_INSTRUCTIONS = """\
+You are a specialist on a Strix audit. Drive testing with your own shell, \
+browser, grep, and HTTP tooling. Only test authorized targets. load_skill \
+the packs named in your job prompt, prove exploits before filing, and call \
+create_vulnerability_report only for validated findings. Coverage todos are \
+not seeded — do not try to cover every vulnerability class. Do not spawn \
+sub-agents. When the job is done, stop."""
 
 # Host-safe tools only. Shell/browser stay with the coding agent; Caido/Kali
 # tools stay in the Docker scan path.
@@ -222,8 +232,10 @@ def mcp_tool_descriptors() -> list[dict[str, Any]]:
     return tools
 
 
-def bootstrap_mcp_run(run_name: str = DEFAULT_RUN_NAME) -> ReportState:
+def bootstrap_mcp_run(run_name: str = DEFAULT_RUN_NAME, *, seed_coverage: bool = True) -> ReportState:
     """Create (or reuse) the on-disk run so findings persist without a scan loop."""
+    global _seed_coverage
+    _seed_coverage = seed_coverage
     existing = get_global_report_state()
     if existing is not None:
         return existing
@@ -238,7 +250,8 @@ def bootstrap_mcp_run(run_name: str = DEFAULT_RUN_NAME) -> ReportState:
     hydrate_credentials_from_disk(state_dir)
     hydrate_chains_from_disk(state_dir)
     hydrate_validations_from_disk(state_dir)
-    _seed_coverage_todos()
+    if seed_coverage:
+        _seed_coverage_todos()
     state.save_run_data()
     return state
 
@@ -279,7 +292,7 @@ def _initialize_result() -> dict[str, Any]:
         "protocolVersion": PROTOCOL_VERSION,
         "capabilities": {"tools": {}},
         "serverInfo": {"name": "strix", "version": get_version()},
-        "instructions": MCP_INSTRUCTIONS,
+        "instructions": MCP_INSTRUCTIONS if _seed_coverage else SPECIALIST_MCP_INSTRUCTIONS,
     }
 
 
@@ -415,6 +428,11 @@ def run_mcp(argv: list[str]) -> int:
         help="Install missing scanners AND upgrade already-installed ones to the "
         "latest version (also refreshes nuclei templates), then exit.",
     )
+    parser.add_argument(
+        "--no-seed",
+        action="store_true",
+        help="Skip vuln-class coverage todos; specialist instructions (used by strix audit workers).",
+    )
     args = parser.parse_args(argv)
 
     if args.install_tools or args.update_tools:
@@ -428,7 +446,7 @@ def run_mcp(argv: list[str]) -> int:
         failed = [n for n, r in results.items() if r["status"] == "failed"]
         return 1 if failed else 0
 
-    bootstrap_mcp_run(args.run_name)
+    bootstrap_mcp_run(args.run_name, seed_coverage=not args.no_seed)
     absent = missing_tools()
     if absent:
         logger.warning(
