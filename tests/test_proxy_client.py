@@ -226,3 +226,31 @@ async def test_ctx_client_returns_none_when_unreachable(monkeypatch: pytest.Monk
     monkeypatch.setattr(caido_api, "get_client", _boom)
     assert await tools._ctx_client(cast("Any", _Ctx({}))) is None
     assert await tools._ctx_client(cast("Any", _Ctx(None))) is None
+
+
+def test_repeat_variant_summary_diffs_against_baseline() -> None:
+    """repeat_request batch mode: each variant summary is diffed vs baseline."""
+    from strix.tools.proxy import caido_api
+    from strix.tools.proxy import tools as proxy_tools
+
+    base_raw = b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\ndenied"
+    base_resp = caido_api.parse_raw_response(base_raw)
+
+    idor = {
+        "status": "DONE",
+        "elapsed_ms": 12,
+        "response_raw": b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n" + b"leaked" * 20,
+    }
+    hot = proxy_tools._summarize_repeat_variant("id=2", idor, base_resp)
+    assert hot["status_code"] == 200
+    assert hot["status_changed"] is True
+    assert hot["len_delta"] > 0
+
+    same = proxy_tools._summarize_repeat_variant(
+        "id=1", {"status": "DONE", "elapsed_ms": 9, "response_raw": base_raw}, base_resp
+    )
+    assert same["status_changed"] is False
+    assert same["len_delta"] == 0
+
+    missing = proxy_tools._summarize_repeat_variant("x", None, base_resp)
+    assert missing["success"] is False

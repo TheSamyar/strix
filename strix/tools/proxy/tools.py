@@ -363,13 +363,52 @@ def _format_text_page(content: str, *, page: int, page_size: int) -> dict[str, A
     }
 
 
+_REPEAT_VARIANT_BODY_CAP = 4_000
+_REPEAT_MAX_VARIANTS = 50
+
+
+def _summarize_repeat_variant(
+    label: str, replay: dict[str, Any] | None, baseline_resp: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Compact per-variant repeat result diffed against the baseline response."""
+    if replay is None:
+        return {"label": label, "success": False, "error": "request not found"}
+    resp = caido_api.parse_raw_response(replay.get("response_raw"))
+    out: dict[str, Any] = {
+        "label": label,
+        "success": replay["status"] == "DONE",
+        "status": replay["status"],
+        "elapsed_ms": replay["elapsed_ms"],
+    }
+    if replay.get("error"):
+        out["error"] = replay["error"]
+    if resp is None:
+        return out
+    base_len = baseline_resp["length"] if baseline_resp else 0
+    body = resp.get("body", "")
+    out.update(
+        {
+            "status_code": resp["status_code"],
+            "length": resp["length"],
+            "len_delta": resp["length"] - base_len,
+            "status_changed": (
+                baseline_resp is not None and resp["status_code"] != baseline_resp["status_code"]
+            ),
+            "body": body[:_REPEAT_VARIANT_BODY_CAP],
+            "truncated": len(body) > _REPEAT_VARIANT_BODY_CAP,
+        }
+    )
+    return out
+
+
 @function_tool(timeout=120, strict_mode=False)
 async def repeat_request(
     ctx: RunContextWrapper,
     request_id: str,
     modifications: dict[str, Any] | None = None,
+    variants: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Repeat a captured request, optionally patching individual fields.
+    """Repeat a captured request, optionally patching fields — one shot or a batch.
 
     The standard pentesting workflow with this tool:
 
@@ -384,47 +423,92 @@ async def repeat_request(
     (headers, cookies, auth, method, URL) and overlays only the fields
     you specify in ``modifications``.
 
+    Batch mode (``variants`` given): replay the captured request once as the
+    baseline (using ``modifications``, if any), then once per variant — all in
+    ONE call — each diffed against the baseline (``status_changed``,
+    ``len_delta``). Collapse a sweep into a single tool call instead of one
+    repeat per case: IDOR across object IDs, BFLA across roles/tokens, or
+    parameter tampering across values. The interesting variant is the one whose
+    status or length diverges; re-run it alone for the full body. Up to 50
+    variants per call.
+
     Args:
         request_id: ID of the original request (from ``list_requests``).
-        modifications: Patch dict. Recognized keys:
+        modifications: Patch dict applied to the base/baseline request.
+            Recognized keys:
 
             - ``url`` — replace the URL.
             - ``params`` — dict of query-string keys to add/update.
             - ``headers`` — dict of headers to add/update.
             - ``body`` — replace the body string entirely.
             - ``cookies`` — dict of cookies to add/update.
+        variants: Optional list of patch dicts (same keys as ``modifications``,
+            plus an optional ``label``) to batch. Each is applied over the
+            original captured request independently. Example:
+            ``[{"label": "id=2", "params": {"id": "2"}},
+            {"label": "id=3", "params": {"id": "3"}}]``.
     """
     client = await _ctx_client(ctx)
     if client is None:
         return _no_client()
-    mods = modifications or {}
+    base_mods = modifications or {}
 
-    async def _do(client: Client) -> dict[str, Any] | None:
-        result = await caido_api.get_request_with_client(client, request_id, part="request")
-        if result is None or result.request.raw is None:
-            return None
-        original = result.request
-        raw_str = result.request.raw.decode("utf-8", errors="replace")
-        components = caido_api.parse_raw_request(raw_str)
-        full_url = caido_api.full_url_from_components(original, components, mods)
-        modified = caido_api.apply_modifications(components, mods, full_url)
-        connection, raw = caido_api.build_raw_request(
-            method=modified["method"],
-            url=modified["url"],
-            headers=modified["headers"],
-            body=modified["body"],
-        )
-        return await caido_api.replay_send_raw(client, raw=raw, connection=connection)
+    def _make_do(mods: dict[str, Any]):
+        async def _do(client: Client) -> dict[str, Any] | None:
+            result = await caido_api.get_request_with_client(client, request_id, part="request")
+            if result is None or result.request.raw is None:
+                return None
+            original = result.request
+            raw_str = result.request.raw.decode("utf-8", errors="replace")
+            components = caido_api.parse_raw_request(raw_str)
+            full_url = caido_api.full_url_from_components(original, components, mods)
+            modified = caido_api.apply_modifications(components, mods, full_url)
+            connection, raw = caido_api.build_raw_request(
+                method=modified["method"],
+                url=modified["url"],
+                headers=modified["headers"],
+                body=modified["body"],
+            )
+            return await caido_api.replay_send_raw(client, raw=raw, connection=connection)
+
+        return _do
 
     try:
-        replay = await _call(client, _do)
-        if replay is None:
+        if not variants:
+            replay = await _call(client, _make_do(base_mods))
+            if replay is None:
+                return json.dumps(
+                    {"success": False, "error": f"Request {request_id} not found"},
+                    ensure_ascii=False,
+                    default=str,
+                )
+            return _format_replay_tool_result(replay)
+
+        dropped = max(0, len(variants) - _REPEAT_MAX_VARIANTS)
+        batch = variants[:_REPEAT_MAX_VARIANTS]
+        baseline_replay = await _call(client, _make_do(base_mods))
+        if baseline_replay is None:
             return json.dumps(
                 {"success": False, "error": f"Request {request_id} not found"},
                 ensure_ascii=False,
                 default=str,
             )
-        return _format_replay_tool_result(replay)
+        baseline_resp = caido_api.parse_raw_response(baseline_replay.get("response_raw"))
+        summaries: list[dict[str, Any]] = []
+        for i, v in enumerate(batch):
+            mods = {**base_mods, **{k: val for k, val in v.items() if k != "label"}}
+            replay = await _call(client, _make_do(mods))
+            label = str(v.get("label", f"variant-{i}"))
+            summaries.append(_summarize_repeat_variant(label, replay, baseline_resp))
+        result: dict[str, Any] = {
+            "success": True,
+            "baseline": baseline_resp,
+            "variants": summaries,
+            "count": len(summaries),
+        }
+        if dropped:
+            result["dropped"] = dropped
+        return json.dumps(result, ensure_ascii=False, default=str)
     except Exception as exc:  # noqa: BLE001
         return _err("repeat_request", exc)
 
