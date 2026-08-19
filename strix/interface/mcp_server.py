@@ -55,10 +55,12 @@ from strix.tools.credentials.tools import (
     list_credentials,
     store_credential,
 )
+from strix.tools.csrf_probe.tools import csrf_probe
 from strix.tools.cve_lookup.tools import cve_lookup
 from strix.tools.data_exposure.tools import data_exposure_probe
 from strix.tools.dedupe.tools import dedupe_reports
 from strix.tools.deep_fuzz.tools import deep_fuzz
+from strix.tools.default_creds.tools import default_creds
 from strix.tools.dep_confusion.tools import check_dependency_confusion
 from strix.tools.desync.tools import cache_deception_probe, request_smuggling_probe
 from strix.tools.diff_response.tools import diff_response
@@ -297,6 +299,8 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     user_enumeration_probe,
     oauth_probe,
     dos_probe,
+    csrf_probe,
+    default_creds,
     mass_assignment_probe,
     redirect_probe,
     security_headers_probe,
