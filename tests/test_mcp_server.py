@@ -96,6 +96,8 @@ def test_tools_list_includes_skill_and_report_tools() -> None:
         "deep_fuzz",
         "param_discover",
         "content_discover",
+        "authz_matrix",
+        "stored_probe",
     } <= names
     assert "create_agent" not in names
     assert "finish_scan" not in names

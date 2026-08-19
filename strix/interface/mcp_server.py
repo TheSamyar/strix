@@ -33,6 +33,7 @@ from strix.tools.attack_surface.tools import (
 )
 from strix.tools.auth_crawl.tools import auth_crawl
 from strix.tools.auth_probe.tools import session_invalidation_probe
+from strix.tools.authz_matrix.tools import authz_matrix
 from strix.tools.authz_probe.tools import authz_probe
 from strix.tools.backend_rules_probe.tools import backend_rules_probe
 from strix.tools.cache_privacy.tools import cache_privacy_probe
@@ -121,6 +122,7 @@ from strix.tools.scanner_deps.tools import (
 from strix.tools.security_headers.tools import security_headers_probe
 from strix.tools.ssr_leak.tools import ssr_leak_scan
 from strix.tools.storage_probe.tools import storage_probe
+from strix.tools.stored_probe.tools import stored_probe
 from strix.tools.todo.tools import (
     create_todo,
     delete_todo,
@@ -267,6 +269,8 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     import_openapi,
     http_replay,
     authz_probe,
+    authz_matrix,
+    stored_probe,
     injection_fuzz,
     deep_fuzz,
     param_discover,
