@@ -16,6 +16,7 @@ from typing import Any
 
 from agents import RunContextWrapper, function_tool
 
+from strix.tools.batching import url_batch
 from strix.tools.frontend_secret_scan.tools import _scan_text
 from strix.tools.http_replay.tools import _replay_impl
 
@@ -77,7 +78,9 @@ def _ssr_leak_impl(url: str, timeout: int) -> dict[str, Any]:
 
 
 @function_tool(timeout=90, strict_mode=False)
-async def ssr_leak_scan(ctx: RunContextWrapper, url: str, timeout: int = 20) -> str:
+async def ssr_leak_scan(
+    ctx: RunContextWrapper, url: str = "", timeout: int = 20, urls: list[str] | None = None
+) -> str:
     """Scan a page's server-rendered state for leaked data.
 
     Extracts ``__NEXT_DATA__`` / RSC flight / ``__NUXT__`` / ``__APOLLO_STATE__``
@@ -87,13 +90,22 @@ async def ssr_leak_scan(ctx: RunContextWrapper, url: str, timeout: int = 20) -> 
     targets.
 
     Returns JSON with ``possible_ssr_leak`` and per-blob ``sensitive_fields`` /
-    ``emails_found`` / ``secrets``.
+    ``emails_found`` / ``secrets``. In batch mode returns ``results`` — one such
+    object per URL (each with its ``url``) — plus ``count``.
 
     Args:
         url: Page URL to scan (an SSR page, ideally one showing user data).
         timeout: Request timeout in seconds (default 20).
+        urls: Optional list of pages to scan in one call (max 25) — same per-URL
+            scan, one call instead of one per page. Overrides ``url``.
     """
     del ctx
+    if urls:
+        return json.dumps(
+            await asyncio.to_thread(url_batch, _ssr_leak_impl, urls, timeout),
+            ensure_ascii=False,
+            default=str,
+        )
     return json.dumps(
         await asyncio.to_thread(_ssr_leak_impl, url, timeout), ensure_ascii=False, default=str
     )

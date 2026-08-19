@@ -14,6 +14,7 @@ from typing import Any
 
 from agents import RunContextWrapper, function_tool
 
+from strix.tools.batching import url_batch
 from strix.tools.http_replay.tools import _replay_impl
 
 
@@ -104,10 +105,11 @@ def _data_exposure_impl(
 @function_tool(timeout=60, strict_mode=False)
 async def data_exposure_probe(
     ctx: RunContextWrapper,
-    url: str,
+    url: str = "",
     method: str = "GET",
     headers: dict[str, str] | None = None,
     timeout: int = 15,
+    urls: list[str] | None = None,
 ) -> str:
     """Flag excessive data exposure (OWASP API3) in an endpoint's JSON response.
 
@@ -118,15 +120,30 @@ async def data_exposure_probe(
     authorized targets.
 
     Returns JSON with ``possible_excessive_exposure``, ``sensitive_fields``, and
-    the ``field_paths`` where each was found.
+    the ``field_paths`` where each was found. In batch mode returns ``results`` —
+    one such object per URL (each with its ``url``) — plus ``count``; the same
+    ``method`` and ``headers`` apply to every URL.
 
     Args:
-        url: The endpoint to inspect (one the UI uses to render user data).
+        url: The endpoint to inspect (single-URL mode).
         method: HTTP method (default GET).
         headers: Session headers — test as a normal, low-privilege user.
         timeout: Request timeout in seconds (default 15).
+        urls: Optional list of endpoints to inspect in one call (max 25) — same
+            per-URL scan with the same method/headers, one call instead of one
+            per endpoint. Overrides ``url``.
     """
     del ctx
+    if urls:
+
+        def _one(u: str, t: int) -> dict[str, Any]:
+            return _data_exposure_impl(method, u, headers, t)
+
+        return json.dumps(
+            await asyncio.to_thread(url_batch, _one, urls, timeout),
+            ensure_ascii=False,
+            default=str,
+        )
     return json.dumps(
         await asyncio.to_thread(_data_exposure_impl, method, url, headers, timeout),
         ensure_ascii=False,

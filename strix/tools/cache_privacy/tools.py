@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 from agents import RunContextWrapper, function_tool
 
+from strix.tools.batching import url_batch
 from strix.tools.http_replay.tools import _replay_impl
 
 
@@ -100,9 +101,10 @@ def _cache_privacy_impl(
 @function_tool(timeout=60, strict_mode=False)
 async def cache_privacy_probe(
     ctx: RunContextWrapper,
-    url: str,
+    url: str = "",
     headers: dict[str, str] | None = None,
     timeout: int = 15,
+    urls: list[str] | None = None,
 ) -> str:
     """Check a private URL for cacheability and tokens leaking in the URL.
 
@@ -114,14 +116,29 @@ async def cache_privacy_probe(
     Only test authorized targets.
 
     Returns JSON with ``authenticated_response_cacheable``,
-    ``token_params_in_url``, and ``possible_privacy_leak``.
+    ``token_params_in_url``, and ``possible_privacy_leak``. In batch mode returns
+    ``results`` — one such object per URL (each with its ``url``) — plus
+    ``count``; the same ``headers`` apply to every URL.
 
     Args:
-        url: The private/authenticated URL to check.
+        url: The private/authenticated URL to check (single-URL mode).
         headers: Session headers (Cookie/Authorization).
         timeout: Request timeout in seconds (default 15).
+        urls: Optional list of URLs to check in one call (max 25) — same
+            per-URL check with the same headers, one call instead of one per
+            URL. Overrides ``url``.
     """
     del ctx
+    if urls:
+
+        def _one(u: str, t: int) -> dict[str, Any]:
+            return _cache_privacy_impl(u, headers, t)
+
+        return json.dumps(
+            await asyncio.to_thread(url_batch, _one, urls, timeout),
+            ensure_ascii=False,
+            default=str,
+        )
     return json.dumps(
         await asyncio.to_thread(_cache_privacy_impl, url, headers, timeout),
         ensure_ascii=False,
