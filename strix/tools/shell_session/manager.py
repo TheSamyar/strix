@@ -154,27 +154,36 @@ def shell_exec(session_id: str, command: str, read_timeout: float = 3.0) -> dict
     if not sess.alive:
         return {"success": False, "error": f"session {session_id} is dead"}
     sess.drain()  # clear stale banner/prompt so output maps to this command
+    # Sentinel echoed after the command marks exactly when it finished, instead
+    # of guessing from output-idle timing. Split so the echoed command line
+    # (…$((6*7))) differs from the printed token (…42): a shell that echoes its
+    # input back can't be mistaken for the command completing.
+    marker = "__STRX" + uuid.uuid4().hex[:8]
+    done = marker + "42"
     try:
-        sess.send(command.rstrip("\n") + "\n")
+        sess.send(f"{command.rstrip('\n')}; echo {marker}$((6*7))\n")
     except OSError as e:
         sess.alive = False
         return {"success": False, "error": f"send failed: {e}"}
-    # Collect until idle (one quiet poll after output, two if still empty) or timeout.
+    # Read until the sentinel appears (command done) or read_timeout elapses
+    # (fallback for a raw pipe with no shell to echo the sentinel back).
     deadline = time.time() + max(0.5, read_timeout)
     out = ""
-    last_len = -1
-    quiet_polls = 0
     while time.time() < deadline:
-        time.sleep(0.25)
         out += sess.drain()
-        if len(out) == last_len:
-            quiet_polls += 1
-            if out or quiet_polls >= 2:
-                break
-        else:
-            quiet_polls = 0
-        last_len = len(out)
-    return {"success": True, "session_id": session_id, "command": command, "output": out}
+        idx = out.find(done)
+        if idx != -1:
+            out = out[:idx]  # drop the sentinel line and any trailing prompt
+            break
+        if not sess.alive:
+            break
+        time.sleep(0.1)
+    return {
+        "success": True,
+        "session_id": session_id,
+        "command": command,
+        "output": out.rstrip("\n"),
+    }
 
 
 def close_shell(session_id: str | None = None, port: int | None = None) -> dict[str, object]:

@@ -23,8 +23,15 @@ def _find_free_port() -> int:
     return port
 
 
+def _emit_sentinel(conn: socket.socket, line: str) -> None:
+    """Print shell_exec's evaluated completion marker (``<marker>42``) if present."""
+    _base, sep, tail = line.partition("; echo ")
+    if sep and "$((6*7))" in tail:
+        conn.sendall(tail.replace("$((6*7))", "42").encode() + b"\n")
+
+
 def _fake_shell(host: str, port: int) -> None:
-    """A trivial reverse shell: connect back, echo each line prefixed with 'out:'."""
+    """Echo each line prefixed with 'out:', then print the completion sentinel."""
     c = socket.create_connection((host, port), timeout=5)
     c.sendall(b"banner\n")
     try:
@@ -32,7 +39,9 @@ def _fake_shell(host: str, port: int) -> None:
             data = c.recv(4096)
             if not data:
                 break
+            line = data.decode("utf-8", errors="replace").strip()
             c.sendall(b"out:" + data)
+            _emit_sentinel(c, line)
     except OSError:
         pass
     finally:
@@ -40,15 +49,22 @@ def _fake_shell(host: str, port: int) -> None:
 
 
 def _scripted_shell(host: str, port: int, replies: dict[str, bytes]) -> None:
-    """Reply with ``replies[exact command]`` (default empty). Does not echo the command."""
+    """Reply with ``replies[base command]``, then print shell_exec's completion sentinel.
+
+    Mimics a real shell: strips the ``; echo <marker>$((6*7))`` that shell_exec
+    appends, looks the base command up, replies, then echoes ``<marker>42`` so
+    the completion path (not the timeout fallback) is what gets tested.
+    """
     c = socket.create_connection((host, port), timeout=5)
     try:
         while True:
             data = c.recv(4096)
             if not data:
                 break
-            cmd = data.decode("utf-8", errors="replace").strip()
-            c.sendall(replies.get(cmd, b""))
+            line = data.decode("utf-8", errors="replace").strip()
+            base, _sep, _tail = line.partition("; echo ")
+            c.sendall(replies.get(base.strip(), b""))
+            _emit_sentinel(c, line)
     except OSError:
         pass
     finally:
@@ -142,6 +158,7 @@ def test_pivot_scan_detects_open() -> None:
                 line = data.decode("utf-8", errors="replace")
                 if "/dev/tcp/10.0.0.5/22" in line:
                     c.sendall(b"OPEN42\n")
+                _emit_sentinel(c, line.strip())
         except OSError:
             pass
         finally:
@@ -177,3 +194,28 @@ def test_empty_output_does_not_wait_full_timeout() -> None:
     assert out["success"] is True
     assert out["output"] == ""
     assert elapsed < 1.5
+
+
+def test_echoed_command_is_not_treated_as_done() -> None:
+    """A shell that echoes ``$((6*7))`` must not complete before it prints ``42``."""
+
+    def shell(host: str, port: int) -> None:
+        c = socket.create_connection((host, port), timeout=5)
+        try:
+            data = c.recv(4096)
+            if not data:
+                return
+            c.sendall(data)  # echo the unevaluated ``echo __STRX…$((6*7))`` line
+            time.sleep(0.25)
+            c.sendall(b"secret\n")
+            _emit_sentinel(c, data.decode("utf-8", errors="replace").strip())
+        except OSError:
+            pass
+        finally:
+            c.close()
+
+    with _session(shell) as sid:
+        out = manager.shell_exec(sid, "id", read_timeout=3.0)
+    assert out["success"] is True
+    assert "secret" in out["output"]
+    assert "42" not in out["output"]

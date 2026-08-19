@@ -70,8 +70,9 @@ async def shell_exec(
 
     The workhorse for post-exploitation: prove impact with ``id`` / ``whoami`` /
     ``hostname``, read a secret (``cat /etc/passwd``, app config, cloud creds),
-    or stage a pivot. Output is collected until the shell goes idle or
-    ``read_timeout`` elapses. Line-oriented shells only (no vim/top).
+    or stage a pivot. Returns when a completion sentinel is printed (command
+    finished) or ``read_timeout`` elapses (raw pipe with no shell). Line-oriented
+    shells only (no vim/top).
 
     Returns JSON with ``output``.
 
