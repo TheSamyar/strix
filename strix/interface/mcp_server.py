@@ -20,7 +20,7 @@ from agents.tool_context import ToolContext
 from strix.core.paths import runtime_state_dir
 from strix.interface.cli_args import get_version
 from strix.report.state import ReportState, get_global_report_state, set_global_report_state
-from strix.skills import get_available_skills
+from strix.skills import get_available_skills, load_skills
 from strix.tools.attack_surface.tools import (
     auth_matrix,
     hydrate_attack_surface_from_disk,
@@ -380,7 +380,11 @@ def _rpc_error(msg: Mapping[str, Any], code: int, message: str) -> dict[str, Any
 def _initialize_result() -> dict[str, Any]:
     return {
         "protocolVersion": PROTOCOL_VERSION,
-        "capabilities": {"tools": {}},
+        "capabilities": {
+            "tools": {},
+            "resources": {},
+            "prompts": {},
+        },
         "serverInfo": {"name": "strix", "version": get_version()},
         "instructions": (
             MCP_INSTRUCTIONS
@@ -426,6 +430,129 @@ def _call_tool_response(msg: Mapping[str, Any]) -> dict[str, Any]:
     return _rpc_result(msg, result)
 
 
+SKILLS_URI = "strix://skills"
+REPORTS_URI = "strix://reports"
+_SKILL_URI_PREFIX = "strix://skill/"
+
+
+def mcp_resource_descriptors() -> list[dict[str, Any]]:
+    """Skill catalog, current findings, and one resource per skill pack.
+
+    Resources let clients that prefer attach-context over tool calls pull a
+    pack or the live findings without a round-trip through load_skill."""
+    resources: list[dict[str, Any]] = [
+        {
+            "uri": SKILLS_URI,
+            "name": "Strix skill catalog",
+            "description": "All pentest knowledge packs grouped by category (JSON).",
+            "mimeType": "application/json",
+        },
+        {
+            "uri": REPORTS_URI,
+            "name": "Strix findings",
+            "description": "Validated vulnerability reports filed this run (JSON).",
+            "mimeType": "application/json",
+        },
+    ]
+    for category, packs in get_available_skills().items():
+        for pack in packs:
+            name = pack.get("name")
+            if not name:
+                continue
+            resources.append(
+                {
+                    "uri": f"{_SKILL_URI_PREFIX}{name}",
+                    "name": f"skill: {name}",
+                    "description": _clip_desc(pack.get("description") or category),
+                    "mimeType": "text/markdown",
+                }
+            )
+    return resources
+
+
+def _resource_contents(uri: str) -> dict[str, Any] | None:
+    if uri == SKILLS_URI:
+        return {
+            "uri": uri,
+            "mimeType": "application/json",
+            "text": json.dumps(get_available_skills(), indent=2),
+        }
+    if uri == REPORTS_URI:
+        state = get_global_report_state()
+        reports = state.get_existing_vulnerabilities() if state is not None else []
+        return {
+            "uri": uri,
+            "mimeType": "application/json",
+            "text": json.dumps(reports, indent=2, default=str),
+        }
+    if uri.startswith(_SKILL_URI_PREFIX):
+        name = uri[len(_SKILL_URI_PREFIX) :]
+        body = load_skills([name]).get(name)
+        if body is None:
+            return None
+        return {"uri": uri, "mimeType": "text/markdown", "text": f"# Skill: {name}\n\n{body}"}
+    return None
+
+
+def _read_resource_response(msg: Mapping[str, Any]) -> dict[str, Any]:
+    params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+    uri = params.get("uri")
+    if not isinstance(uri, str) or not uri:
+        return _rpc_error(msg, -32602, "resources/read requires params.uri")
+    contents = _resource_contents(uri)
+    if contents is None:
+        return _rpc_error(msg, -32602, f"Unknown resource: {uri}")
+    return _rpc_result(msg, {"contents": [contents]})
+
+
+PENTEST_PROMPT = "pentest_target"
+
+
+def mcp_prompt_descriptors() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": PENTEST_PROMPT,
+            "description": (
+                "Seed the full Strix pentest methodology against a target. Injects "
+                "the recon-first, per-surface-per-class playbook so the client can't "
+                "run a shallow ad-hoc audit."
+            ),
+            "arguments": [
+                {"name": "target", "description": "URL, host, or repo to test.", "required": True},
+                {
+                    "name": "focus",
+                    "description": "Optional bug class or surface to prioritize.",
+                    "required": False,
+                },
+            ],
+        }
+    ]
+
+
+def _get_prompt_response(msg: Mapping[str, Any]) -> dict[str, Any]:
+    params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+    name = params.get("name")
+    if name != PENTEST_PROMPT:
+        return _rpc_error(msg, -32602, f"Unknown prompt: {name}")
+    args = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
+    target = args.get("target")
+    if not isinstance(target, str) or not target:
+        return _rpc_error(msg, -32602, "pentest_target requires arguments.target")
+    focus = args.get("focus")
+    text = f"{MCP_INSTRUCTIONS}\n\nTARGET: {target}"
+    if isinstance(focus, str) and focus:
+        text += f"\nPRIORITIZE: {focus}"
+    return _rpc_result(
+        msg,
+        {
+            "description": f"Strix pentest playbook for {target}",
+            "messages": [
+                {"role": "user", "content": {"type": "text", "text": text}},
+            ],
+        },
+    )
+
+
 def handle_message(msg: Mapping[str, Any]) -> dict[str, Any] | None:
     """Handle one JSON-RPC MCP message. Notifications return None."""
     method = msg.get("method")
@@ -438,6 +565,10 @@ def handle_message(msg: Mapping[str, Any]) -> dict[str, Any] | None:
         "ping": lambda: _rpc_result(msg, {}),
         "tools/list": lambda: _rpc_result(msg, {"tools": mcp_tool_descriptors()}),
         "tools/call": lambda: _call_tool_response(msg),
+        "resources/list": lambda: _rpc_result(msg, {"resources": mcp_resource_descriptors()}),
+        "resources/read": lambda: _read_resource_response(msg),
+        "prompts/list": lambda: _rpc_result(msg, {"prompts": mcp_prompt_descriptors()}),
+        "prompts/get": lambda: _get_prompt_response(msg),
     }
     handler = handlers.get(method)
     if handler is None:
@@ -483,21 +614,94 @@ def _read_message() -> dict[str, Any] | None:
     return _read_lsp_body(line)
 
 
-def serve_stdio() -> int:
-    """Block on stdin until the MCP client closes the pipe."""
+def _progress_token(params: Mapping[str, Any]) -> str | int | None:
+    """Pull the client's progressToken from params._meta, if any (MCP spec)."""
+    meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
+    token = meta.get("progressToken")
+    return token if isinstance(token, (str, int)) else None
+
+
+def _progress_notification(
+    token: str | int, progress: float, total: float | None = None
+) -> dict[str, Any]:
+    params: dict[str, Any] = {"progressToken": token, "progress": progress}
+    if total is not None:
+        params["total"] = total
+    return {"jsonrpc": "2.0", "method": "notifications/progress", "params": params}
+
+
+async def _dispatch_tool_call(msg: Mapping[str, Any]) -> None:
+    """Run one tools/call as its own task so slow scanners don't block the
+    read loop, ping, or other tool calls. Emits start/done progress when the
+    client passed a progressToken."""
+    params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+    token = _progress_token(params)
+    name = params.get("name")
+    arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
+    if not isinstance(name, str) or not name:
+        _write_message(_rpc_error(msg, -32602, "tools/call requires params.name"))
+        return
+    if token is not None:
+        _write_message(_progress_notification(token, 0.0, 1.0))
+    try:
+        result = await _invoke_host_tool(name, arguments)
+    except Exception as exc:
+        logger.exception("MCP tool %s failed", name)
+        result = _tool_result(f"{type(exc).__name__}: {exc}", is_error=True)
+    if token is not None:
+        _write_message(_progress_notification(token, 1.0, 1.0))
+    _write_message(_rpc_result(msg, result))
+
+
+async def _serve_stdio_async() -> int:
+    """Event loop: a stdin reader thread feeds messages onto a queue; fast
+    methods answer inline, tools/call runs concurrently as tasks. All writes
+    happen on this single loop thread, so stdout stays uncorrupted.
+
+    # ponytail: tool calls share in-memory state (todos/notes/report); the one
+    # client LLM issues calls serially in practice, and concurrency exists so
+    # ping/tools-list stay live during a long scan. Add per-store locks only if
+    # a client is observed firing overlapping state-mutating calls.
+    """
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+    def _reader() -> None:
+        while True:
+            try:
+                msg = _read_message()
+            except json.JSONDecodeError:
+                logger.warning("MCP: skipping non-JSON payload")
+                continue
+            loop.call_soon_threadsafe(queue.put_nowait, msg)
+            if msg is None:
+                return
+
+    threading.Thread(target=_reader, name="strix-mcp-stdin", daemon=True).start()
+
+    pending: set[asyncio.Task[None]] = set()
     while True:
-        try:
-            msg = _read_message()
-        except json.JSONDecodeError:
-            logger.warning("MCP: skipping non-JSON payload")
-            continue
+        msg = await queue.get()
         if msg is None:
-            return 0
+            break
         if not isinstance(msg, dict):
+            continue
+        if msg.get("method") == "tools/call":
+            task = asyncio.create_task(_dispatch_tool_call(msg))
+            pending.add(task)
+            task.add_done_callback(pending.discard)
             continue
         response = handle_message(msg)
         if response is not None:
             _write_message(response)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    return 0
+
+
+def serve_stdio() -> int:
+    """Block on stdin until the MCP client closes the pipe."""
+    return asyncio.run(_serve_stdio_async())
 
 
 def run_mcp(argv: list[str]) -> int:

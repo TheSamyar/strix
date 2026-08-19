@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from io import BytesIO
 from typing import TYPE_CHECKING, Any
 
@@ -207,3 +209,103 @@ def test_seed_still_creates_coverage_todos(tmp_path: Path, monkeypatch: pytest.M
     assert any("[coverage]" in title for title in titles)
     assert any("[data-leak]" in title for title in titles)
     report_state_mod._global_report_state = None
+
+
+def test_initialize_advertises_resources_and_prompts() -> None:
+    caps = _call("initialize")["result"]["capabilities"]
+    assert "resources" in caps
+    assert "prompts" in caps
+
+
+@pytest.mark.usefixtures("mcp_run")
+def test_resources_list_includes_skills_and_reports() -> None:
+    uris = {r["uri"] for r in _call("resources/list")["result"]["resources"]}
+    assert "strix://skills" in uris
+    assert "strix://reports" in uris
+    assert "strix://skill/xss" in uris
+
+
+@pytest.mark.usefixtures("mcp_run")
+def test_resource_read_skill_returns_markdown() -> None:
+    result = _call("resources/read", {"uri": "strix://skill/xss"})["result"]
+    text = result["contents"][0]["text"]
+    assert "Skill: xss" in text
+
+
+@pytest.mark.usefixtures("mcp_run")
+def test_resource_read_unknown_is_error() -> None:
+    resp = _call("resources/read", {"uri": "strix://nope"})
+    assert "error" in resp
+
+
+@pytest.mark.usefixtures("mcp_run")
+def test_prompts_list_has_pentest_target() -> None:
+    names = {p["name"] for p in _call("prompts/list")["result"]["prompts"]}
+    assert "pentest_target" in names
+
+
+@pytest.mark.usefixtures("mcp_run")
+def test_prompt_get_injects_target() -> None:
+    result = _call(
+        "prompts/get",
+        {"name": "pentest_target", "arguments": {"target": "https://x.example", "focus": "idor"}},
+    )["result"]
+    text = result["messages"][0]["content"]["text"]
+    assert "https://x.example" in text
+    assert "idor" in text
+    assert "HARVEST FIRST" in text
+
+
+@pytest.mark.usefixtures("mcp_run")
+def test_prompt_get_requires_target() -> None:
+    resp = _call("prompts/get", {"name": "pentest_target", "arguments": {}})
+    assert "error" in resp
+
+
+def test_progress_notification_shape() -> None:
+    note = mcp_server._progress_notification("tok-1", 0.0, 1.0)
+    assert note["method"] == "notifications/progress"
+    assert note["params"]["progressToken"] == "tok-1"
+    assert note["params"]["total"] == 1.0
+
+
+def test_progress_token_extraction() -> None:
+    assert mcp_server._progress_token({"_meta": {"progressToken": 7}}) == 7
+    assert mcp_server._progress_token({}) is None
+
+
+@pytest.mark.usefixtures("mcp_run")
+def test_slow_tool_does_not_block_other_methods(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A slow tools/call runs as a task; ping stays responsive and progress fires."""
+    writes: list[dict[str, Any]] = []
+    monkeypatch.setattr(mcp_server, "_write_message", writes.append)
+
+    async def _fake_invoke(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        del name, args
+        await asyncio.sleep(0.2)
+        return mcp_server._tool_result("slow-done")
+
+    monkeypatch.setattr(mcp_server, "_invoke_host_tool", _fake_invoke)
+
+    async def _run() -> float:
+        task = asyncio.create_task(
+            mcp_server._dispatch_tool_call(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": "slow", "arguments": {}, "_meta": {"progressToken": "p1"}},
+                }
+            )
+        )
+        await asyncio.sleep(0.01)
+        t0 = time.monotonic()
+        mcp_server.handle_message({"jsonrpc": "2.0", "id": 2, "method": "ping"})
+        ping_dt = time.monotonic() - t0
+        await task
+        return ping_dt
+
+    ping_dt = asyncio.run(_run())
+    assert ping_dt < 0.1, "ping was blocked by the slow tool call"
+    progress = [w for w in writes if w.get("method") == "notifications/progress"]
+    assert len(progress) == 2
