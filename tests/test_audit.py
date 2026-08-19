@@ -17,23 +17,30 @@ from typing import TYPE_CHECKING
 import pytest
 
 import strix.audit as audit_mod
+import strix.interface.audit as audit_interface_mod
 
 
 if TYPE_CHECKING:
     import subprocess
 
 from strix.audit import (
+    SITE_PROFILES,
+    AuditAuth,
     AuditJob,
+    FetchResult,
     JobResult,
     audit_exit_code,
+    auth_from_args,
     claude_argv,
     codex_argv,
     codex_worktree_argv,
     cursor_argv,
+    detect_site_profile,
     first_local_path,
     jobs_for_mode,
     load_worker_reports,
     mcp_argv,
+    missing_recommended_tools,
     plan_isolation,
     remint_ids,
     resolve_agent,
@@ -67,9 +74,105 @@ def test_deep_extends_standard() -> None:
     assert len(ids) == 8
 
 
+def test_site_profile_choices_are_public_cli_values() -> None:
+    assert SITE_PROFILES == ("auto", "generic", "nextjs", "wordpress")
+
+
 def test_unknown_mode_raises() -> None:
     with pytest.raises(ValueError, match="scan-mode"):
         jobs_for_mode("turbo")
+
+
+def test_nextjs_profile_jobs_are_stable_and_load_nextjs_skill() -> None:
+    jobs = jobs_for_mode("quick", site_profile="nextjs")
+    assert [j.id for j in jobs] == [
+        "nextjs_recon",
+        "nextjs_routes",
+        "nextjs_auth_cache",
+        "nextjs_injection_ssrf",
+    ]
+    assert all("frameworks/nextjs" in job.skills for job in jobs)
+    assert "Server Actions" in jobs[1].task
+
+
+def test_wordpress_profile_jobs_are_safe_and_load_wpscan_skill() -> None:
+    jobs = jobs_for_mode("quick", site_profile="wordpress")
+    prompt = worker_prompt(
+        jobs[0],
+        [{"type": "web_application", "original": "https://wp.test"}],
+        "",
+    )
+    assert [j.id for j in jobs] == [
+        "wordpress_recon",
+        "wordpress_components",
+        "wordpress_auth_access",
+        "wordpress_injection_uploads",
+    ]
+    assert "tooling/wpscan" in jobs[0].skills
+    assert "WPScan" in prompt
+    assert "--passwords" not in prompt
+    assert "brute force" in prompt.lower()
+
+
+def test_auto_detects_nextjs_from_root_html() -> None:
+    def fetcher(url: str, _headers: dict[str, str]) -> FetchResult:
+        if url != "https://next.test":
+            return FetchResult(url=url, status=404, headers={}, body="")
+        return FetchResult(
+            url=url,
+            status=200,
+            headers={"x-powered-by": "Next.js"},
+            body=(
+                '<script id="__NEXT_DATA__">{}</script>'
+                '<script src="/_next/static/app.js"></script>'
+            ),
+        )
+
+    detected = detect_site_profile(["https://next.test"], "auto", fetcher=fetcher)
+    assert detected.resolved == "nextjs"
+    assert any("__NEXT_DATA__" in item for item in detected.evidence)
+    assert detected.to_dict()["resolved"] == "nextjs"
+
+
+def test_auto_detects_wordpress_from_root_and_wp_json() -> None:
+    def fetcher(url: str, _headers: dict[str, str]) -> FetchResult:
+        if url.endswith("/wp-json/"):
+            return FetchResult(url=url, status=200, headers={}, body='{"namespaces":["wp/v2"]}')
+        return FetchResult(
+            url=url,
+            status=200,
+            headers={},
+            body=(
+                '<meta name="generator" content="WordPress">'
+                '<link href="/wp-content/themes/x/style.css">'
+            ),
+        )
+
+    detected = detect_site_profile(["https://wp.test"], "auto", fetcher=fetcher)
+    assert detected.resolved == "wordpress"
+    assert any("wp-content" in item for item in detected.evidence)
+
+
+def test_auto_detects_mixed_as_generic() -> None:
+    def fetcher(url: str, _headers: dict[str, str]) -> FetchResult:
+        return FetchResult(
+            url=url,
+            status=200,
+            headers={},
+            body="__NEXT_DATA__ wp-content wp-json",
+        )
+
+    detected = detect_site_profile(["https://mixed.test"], "auto", fetcher=fetcher)
+    assert detected.resolved == "generic"
+    assert detected.evidence
+
+
+def test_auto_detects_generic_without_signals() -> None:
+    def fetcher(url: str, _headers: dict[str, str]) -> FetchResult:
+        return FetchResult(url=url, status=200, headers={}, body="<html>hello</html>")
+
+    detected = detect_site_profile(["https://plain.test"], "auto", fetcher=fetcher)
+    assert detected.resolved == "generic"
 
 
 def test_mcp_argv_chdirs_then_passes_run_name() -> None:
@@ -274,6 +377,75 @@ def test_worker_prompt_includes_skills_and_no_subagents() -> None:
     assert "./app" in text
 
 
+def test_worker_prompt_mentions_auth_env_names_not_secret_values() -> None:
+    auth = AuditAuth(
+        cookie="session=secret-cookie",
+        headers=("Authorization: Bearer secret-token",),
+        login_url="https://app.test/login",
+        login_username="admin@example.com",
+        login_password="secret-password",  # noqa: S106
+    )
+    text = worker_prompt(
+        AuditJob("auth", "Auth specialist", ("csrf",), "Test CSRF."),
+        [{"type": "web_application", "original": "https://app.test"}],
+        "",
+        auth=auth,
+    )
+    assert "STRIX_AUTH_COOKIE" in text
+    assert "STRIX_AUTH_HEADER_1" in text
+    assert "STRIX_LOGIN_PASSWORD" in text
+    assert "secret-cookie" not in text
+    assert "secret-token" not in text
+    assert "secret-password" not in text
+    assert "admin@example.com" not in text
+
+
+def test_auth_from_args_exports_worker_env_and_redacted_metadata() -> None:
+    args = Namespace(
+        auth_cookie="session=secret-cookie",
+        auth_header=["Authorization: Bearer secret-token"],
+        login_url="https://app.test/login",
+        login_username="admin@example.com",
+        login_password="secret-password",  # noqa: S106
+    )
+    auth = auth_from_args(args)
+    env = auth.to_env()
+    assert env["STRIX_AUTH_COOKIE"] == "session=secret-cookie"
+    assert env["STRIX_AUTH_HEADER_1"] == "Authorization: Bearer secret-token"
+    assert env["STRIX_LOGIN_PASSWORD"] == "secret-password"  # noqa: S105
+    assert auth.to_redacted_dict() == {
+        "auth_cookie": True,
+        "auth_headers": 1,
+        "login_url": True,
+        "login_username": True,
+        "login_password": True,
+    }
+
+
+def test_auth_header_requires_name_value() -> None:
+    args = Namespace(
+        auth_cookie=None,
+        auth_header=["not-a-header"],
+        login_url=None,
+        login_username=None,
+        login_password=None,
+    )
+    with pytest.raises(ValueError, match="Name: value"):
+        auth_from_args(args)
+
+
+def test_missing_recommended_tools_is_profile_specific() -> None:
+    def lookup(name: str) -> str | None:
+        return "/bin/tool" if name in {"httpx", "whatweb"} else None
+
+    assert missing_recommended_tools("nextjs", path_lookup=lookup) == ("nuclei", "nikto")
+    assert missing_recommended_tools("wordpress", path_lookup=lookup) == (
+        "nuclei",
+        "nikto",
+        "wpscan",
+    )
+
+
 def test_first_local_path(tmp_path: Path) -> None:
     app = tmp_path / "app"
     info = [
@@ -300,6 +472,30 @@ def test_parse_defaults_quick() -> None:
     assert args.scan_mode == "quick"
     assert args.max_workers == 3
     assert args.timeout == 3600
+    assert args.site_profile == "auto"
+
+
+def test_parse_accepts_profile_and_auth_flags() -> None:
+    args = parse_audit_args(
+        [
+            "-t",
+            "https://app.test",
+            "--site-profile",
+            "nextjs",
+            "--auth-cookie",
+            "session=secret",
+            "--auth-header",
+            "Authorization: Bearer token",
+            "--login-url",
+            "https://app.test/login",
+            "--login-username",
+            "admin@example.com",
+            "--login-password",
+            "password",
+        ]
+    )
+    assert args.site_profile == "nextjs"
+    assert args.auth_header == ["Authorization: Bearer token"]
 
 
 def test_targets_info_keeps_localhost() -> None:
@@ -346,6 +542,65 @@ def test_run_audit_fake_claude_exit_zero(tmp_path: Path, monkeypatch: pytest.Mon
     assert code == 0
     recorded = (tmp_path / "strix_runs" / "t1" / "run.json").is_file()
     assert recorded
+
+
+def test_run_audit_writes_profile_detection_and_redacts_auth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "claude"
+    env_file = tmp_path / "worker-env.txt"
+    fake.write_text(
+        f"#!/bin/sh\nprintf '%s' \"$STRIX_AUTH_COOKIE\" > {env_file!s}\nexit 0\n",
+        encoding="utf-8",
+    )
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    def fake_detect(
+        urls: list[str],
+        requested: str,
+        *,
+        auth: AuditAuth | None = None,
+    ) -> audit_mod.SiteProfileDetection:
+        assert urls == ["https://next.test"]
+        assert requested == "auto"
+        assert auth is not None
+        return audit_mod.SiteProfileDetection(
+            requested="auto",
+            resolved="nextjs",
+            target_urls=tuple(urls),
+            evidence=("root: __NEXT_DATA__",),
+            scores={"nextjs": 2, "wordpress": 0},
+            errors=(),
+        )
+
+    monkeypatch.setattr(audit_mod, "detect_site_profile", fake_detect)
+    monkeypatch.setattr(audit_interface_mod, "detect_site_profile", fake_detect)
+    code = run_audit(
+        [
+            "-t",
+            "https://next.test",
+            "--agent",
+            "claude",
+            "--run-name",
+            "profiled",
+            "--auth-cookie",
+            "session=secret-cookie",
+        ]
+    )
+    assert code == 0
+    assert env_file.read_text(encoding="utf-8") == "session=secret-cookie"
+    run_json = (tmp_path / "strix_runs" / "profiled" / "run.json").read_text(encoding="utf-8")
+    assert "secret-cookie" not in run_json
+    assert '"site_profile": "nextjs"' in run_json
+    detection = json.loads(
+        (tmp_path / "strix_runs" / "profiled" / "site_profile.json").read_text(encoding="utf-8")
+    )
+    assert detection["resolved"] == "nextjs"
+    assert "secret-cookie" not in json.dumps(detection)
 
 
 def test_run_audit_missing_agent_exits_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

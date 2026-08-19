@@ -16,6 +16,9 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urljoin, urlparse
+from urllib.request import Request, urlopen
 
 from strix.interface.scan_setup import _resolve_api_spec
 from strix.interface.utils import (
@@ -35,6 +38,8 @@ logger = logging.getLogger(__name__)
 
 
 SCAN_MODES = ("quick", "standard", "deep")
+SITE_PROFILES = ("auto", "generic", "nextjs", "wordpress")
+CONCRETE_SITE_PROFILES = ("generic", "nextjs", "wordpress")
 
 
 @dataclass(frozen=True)
@@ -43,6 +48,77 @@ class AuditJob:
     title: str
     skills: tuple[str, ...]
     task: str
+
+
+@dataclass(frozen=True)
+class AuditAuth:
+    cookie: str | None = None
+    headers: tuple[str, ...] = ()
+    login_url: str | None = None
+    login_username: str | None = None
+    login_password: str | None = None
+
+    def has_auth(self) -> bool:
+        return any(
+            (
+                self.cookie,
+                self.headers,
+                self.login_url,
+                self.login_username,
+                self.login_password,
+            )
+        )
+
+    def to_env(self) -> dict[str, str]:
+        env: dict[str, str] = {}
+        if self.cookie:
+            env["STRIX_AUTH_COOKIE"] = self.cookie
+        for index, header in enumerate(self.headers, start=1):
+            env[f"STRIX_AUTH_HEADER_{index}"] = header
+        if self.login_url:
+            env["STRIX_LOGIN_URL"] = self.login_url
+        if self.login_username:
+            env["STRIX_LOGIN_USERNAME"] = self.login_username
+        if self.login_password:
+            env["STRIX_LOGIN_PASSWORD"] = self.login_password
+        return env
+
+    def to_redacted_dict(self) -> dict[str, bool | int]:
+        return {
+            "auth_cookie": bool(self.cookie),
+            "auth_headers": len(self.headers),
+            "login_url": bool(self.login_url),
+            "login_username": bool(self.login_username),
+            "login_password": bool(self.login_password),
+        }
+
+
+@dataclass(frozen=True)
+class FetchResult:
+    url: str
+    status: int
+    headers: dict[str, str]
+    body: str
+
+
+@dataclass(frozen=True)
+class SiteProfileDetection:
+    requested: str
+    resolved: str
+    target_urls: tuple[str, ...]
+    evidence: tuple[str, ...]
+    scores: dict[str, int]
+    errors: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "requested": self.requested,
+            "resolved": self.resolved,
+            "target_urls": list(self.target_urls),
+            "evidence": list(self.evidence),
+            "scores": self.scores,
+            "errors": list(self.errors),
+        }
 
 
 _QUICK: tuple[AuditJob, ...] = (
@@ -101,14 +177,348 @@ _DEEP_EXTRA: tuple[AuditJob, ...] = (
 )
 
 
-def jobs_for_mode(mode: str) -> tuple[AuditJob, ...]:
+_NEXTJS_QUICK: tuple[AuditJob, ...] = (
+    AuditJob(
+        "nextjs_recon",
+        "Next.js recon specialist",
+        ("asset_discovery", "frameworks/nextjs"),
+        "Fingerprint the deployed Next.js app, crawl public routes, mine build artifacts, "
+        "source maps, manifests, sitemap/robots, and client bundles. Record deployed routes "
+        "and parameters before deeper testing.",
+    ),
+    AuditJob(
+        "nextjs_routes",
+        "Next.js routes and data specialist",
+        ("frameworks/nextjs", "information_disclosure", "xss"),
+        "Test App Router, Pages Router, API routes, Route Handlers, Server Actions, RSC/Flight "
+        "payloads, SSR/SSG/ISR data exposure, __NEXT_DATA__ over-fetching, and hydration/client "
+        "bundle leaks.",
+    ),
+    AuditJob(
+        "nextjs_auth_cache",
+        "Next.js auth and cache specialist",
+        ("frameworks/nextjs", "authentication_jwt", "csrf", "idor"),
+        "Test middleware bypass, NextAuth callbackUrl/provider flows, auth enforcement drift, "
+        "IDOR, cache key confusion, Vary/ETag mistakes, preview/draft mode, and personalized "
+        "data served from shared caches.",
+    ),
+    AuditJob(
+        "nextjs_injection_ssrf",
+        "Next.js injection and SSRF specialist",
+        ("frameworks/nextjs", "sql_injection", "xss", "ssrf", "rce"),
+        "Test query/body parameters, image optimizer SSRF, custom loaders, server action inputs, "
+        "method/content-type switching, open redirects, SSRF, XSS, SQLi, and RCE candidates.",
+    ),
+)
+_NEXTJS_STANDARD_EXTRA: tuple[AuditJob, ...] = (
+    AuditJob(
+        "nextjs_files_uploads",
+        "Next.js file and upload specialist",
+        ("frameworks/nextjs", "path_traversal_lfi_rfi", "insecure_file_uploads"),
+        "Test file-serving routes, download/export endpoints, upload handlers, path normalization, "
+        "and traversal or content-type bypasses.",
+    ),
+    AuditJob(
+        "nextjs_deps_exposure",
+        "Next.js dependency and exposure specialist",
+        ("frameworks/nextjs", "dependency_cve_scanning", "information_disclosure"),
+        "Identify exposed versions, vulnerable deployed packages, public sourcemaps, debug "
+        "endpoints, and leaked NEXT_PUBLIC or accidental secret material.",
+    ),
+)
+_NEXTJS_DEEP_EXTRA: tuple[AuditJob, ...] = (
+    AuditJob(
+        "nextjs_logic_races",
+        "Next.js logic and race specialist",
+        ("frameworks/nextjs", "business_logic", "race_conditions"),
+        "Test high-value workflows for authorization drift, race conditions, replay, and business "
+        "logic flaws in route handlers and server actions.",
+    ),
+    AuditJob(
+        "nextjs_deser_ssti",
+        "Next.js deserialization and template specialist",
+        ("frameworks/nextjs", "insecure_deserialization", "ssti"),
+        "Test serialization boundaries, signed payload handling, template/markdown rendering, and "
+        "dangerous server-side data parsing paths.",
+    ),
+)
+
+_WORDPRESS_QUICK: tuple[AuditJob, ...] = (
+    AuditJob(
+        "wordpress_recon",
+        "WordPress recon specialist",
+        ("tooling/wpscan", "information_disclosure"),
+        "Use WPScan safe enumeration only: version, plugins, themes, and users where useful. "
+        "Also check /wp-json/, /wp-login.php, /xmlrpc.php, /wp-admin/admin-ajax.php, robots, "
+        "sitemaps, exposed backups, and public upload paths. Do not brute force credentials.",
+    ),
+    AuditJob(
+        "wordpress_components",
+        "WordPress component CVE specialist",
+        ("tooling/wpscan", "dependency_cve_scanning", "information_disclosure"),
+        "Correlate WordPress core, plugin, and theme versions with known CVEs using WPScan, "
+        "nuclei, and public evidence. Validate exploitability before filing; scanner labels alone "
+        "are not sufficient.",
+    ),
+    AuditJob(
+        "wordpress_auth_access",
+        "WordPress auth and access specialist",
+        ("csrf", "idor", "broken_function_level_authorization"),
+        "Test REST API permissions, admin-ajax actions, nonce/CSRF weaknesses, user enumeration, "
+        "role/capability bypasses, unauthenticated privileged actions, and authenticated coverage "
+        "when auth env vars are present. Do not brute force credentials.",
+    ),
+    AuditJob(
+        "wordpress_injection_uploads",
+        "WordPress injection and upload specialist",
+        ("sql_injection", "xss", "rce", "insecure_file_uploads", "path_traversal_lfi_rfi"),
+        "Test plugin/theme endpoints, search/forms, REST parameters, AJAX actions, media/upload "
+        "surfaces, file reads, XSS, SQLi, RCE, and traversal candidates.",
+    ),
+)
+_WORDPRESS_STANDARD_EXTRA: tuple[AuditJob, ...] = (
+    AuditJob(
+        "wordpress_ssrf_xmlrpc",
+        "WordPress SSRF and XML-RPC specialist",
+        ("ssrf", "xxe", "tooling/wpscan"),
+        "Test XML-RPC exposure, pingback behavior, oEmbed/fetching features, webhooks, imports, "
+        "and SSRF-like URL fetch surfaces without destructive amplification.",
+    ),
+    AuditJob(
+        "wordpress_secrets_files",
+        "WordPress secrets and files specialist",
+        ("information_disclosure", "path_traversal_lfi_rfi"),
+        "Look for exposed wp-config backups, debug logs, database dumps, install/upgrade "
+        "leftovers, directory indexing, readable uploads, and sensitive files.",
+    ),
+)
+_WORDPRESS_DEEP_EXTRA: tuple[AuditJob, ...] = (
+    AuditJob(
+        "wordpress_logic_races",
+        "WordPress logic and race specialist",
+        ("business_logic", "race_conditions"),
+        "Test commerce, membership, forms, booking, and account workflows for authorization, "
+        "replay, race, and state-machine flaws.",
+    ),
+    AuditJob(
+        "wordpress_deser_ssti",
+        "WordPress deserialization and template specialist",
+        ("insecure_deserialization", "ssti", "rce"),
+        "Test plugin/theme serialization, import/export, template rendering, shortcode processing, "
+        "and dangerous PHP object or template injection paths.",
+    ),
+)
+
+
+def _jobs_for_mode(
+    mode: str,
+    quick: tuple[AuditJob, ...],
+    standard: tuple[AuditJob, ...],
+    deep: tuple[AuditJob, ...],
+) -> tuple[AuditJob, ...]:
     if mode == "quick":
-        return _QUICK
+        return quick
     if mode == "standard":
-        return _QUICK + _STANDARD_EXTRA
+        return quick + standard
     if mode == "deep":
-        return _QUICK + _STANDARD_EXTRA + _DEEP_EXTRA
+        return quick + standard + deep
     raise ValueError(f"unknown scan-mode {mode!r}; expected one of {SCAN_MODES}")
+
+
+def jobs_for_mode(mode: str, *, site_profile: str = "generic") -> tuple[AuditJob, ...]:
+    if site_profile not in CONCRETE_SITE_PROFILES:
+        raise ValueError(
+            f"unknown site-profile {site_profile!r}; expected one of {CONCRETE_SITE_PROFILES}"
+        )
+    if site_profile == "nextjs":
+        return _jobs_for_mode(mode, _NEXTJS_QUICK, _NEXTJS_STANDARD_EXTRA, _NEXTJS_DEEP_EXTRA)
+    if site_profile == "wordpress":
+        return _jobs_for_mode(
+            mode,
+            _WORDPRESS_QUICK,
+            _WORDPRESS_STANDARD_EXTRA,
+            _WORDPRESS_DEEP_EXTRA,
+        )
+    return _jobs_for_mode(mode, _QUICK, _STANDARD_EXTRA, _DEEP_EXTRA)
+
+
+def auth_from_args(args: Any) -> AuditAuth:
+    headers = tuple(str(header).strip() for header in (getattr(args, "auth_header", None) or []))
+    invalid = [header for header in headers if ":" not in header or header.startswith(":")]
+    if invalid:
+        raise ValueError('--auth-header must use "Name: value" format')
+    return AuditAuth(
+        cookie=getattr(args, "auth_cookie", None),
+        headers=headers,
+        login_url=getattr(args, "login_url", None),
+        login_username=getattr(args, "login_username", None),
+        login_password=getattr(args, "login_password", None),
+    )
+
+
+def web_target_urls(targets_info: list[dict[str, Any]]) -> list[str]:
+    return [
+        str(item.get("details", {}).get("target_url"))
+        for item in targets_info
+        if item.get("type") == "web_application" and item.get("details", {}).get("target_url")
+    ]
+
+
+def _default_fetcher(url: str, headers: dict[str, str]) -> FetchResult:
+    if urlparse(url).scheme not in {"http", "https"}:
+        raise ValueError("only http and https URLs can be profiled")
+    request = Request(url, headers=headers, method="GET")  # noqa: S310
+    try:
+        with urlopen(request, timeout=5) as response:  # noqa: S310
+            raw = response.read(512_000)
+            body = raw.decode("utf-8", errors="replace")
+            return FetchResult(
+                url=url,
+                status=int(getattr(response, "status", 0) or 0),
+                headers={str(k).lower(): str(v) for k, v in response.headers.items()},
+                body=body,
+            )
+    except HTTPError as exc:
+        raw = exc.read(64_000)
+        return FetchResult(
+            url=url,
+            status=exc.code,
+            headers={str(k).lower(): str(v) for k, v in exc.headers.items()},
+            body=raw.decode("utf-8", errors="replace"),
+        )
+
+
+def _auth_headers(auth: AuditAuth | None) -> dict[str, str]:
+    headers = {"User-Agent": "strix-audit/1.0"}
+    if auth is None:
+        return headers
+    if auth.cookie:
+        headers["Cookie"] = auth.cookie
+    for raw in auth.headers:
+        name, value = raw.split(":", 1)
+        headers[name.strip()] = value.strip()
+    return headers
+
+
+def _append_signal(evidence: list[str], label: str) -> None:
+    if label not in evidence:
+        evidence.append(label)
+
+
+def _score_response(label: str, result: FetchResult, evidence: list[str]) -> dict[str, int]:
+    body = result.body.lower()
+    headers = {key.lower(): value.lower() for key, value in result.headers.items()}
+    scores = {"nextjs": 0, "wordpress": 0}
+
+    if "__next_data__" in body:
+        scores["nextjs"] += 3
+        _append_signal(evidence, f"{label}: __NEXT_DATA__")
+    if "/_next/" in body or "_next/static" in body:
+        scores["nextjs"] += 2
+        _append_signal(evidence, f"{label}: _next static assets")
+    if "next-action" in body or "rsc" in headers.get("content-type", ""):
+        scores["nextjs"] += 1
+        _append_signal(evidence, f"{label}: RSC/Server Action hints")
+    if "next.js" in headers.get("x-powered-by", ""):
+        scores["nextjs"] += 2
+        _append_signal(evidence, f"{label}: x-powered-by Next.js")
+
+    if "wp-content" in body:
+        scores["wordpress"] += 2
+        _append_signal(evidence, f"{label}: wp-content")
+    if "wp-includes" in body:
+        scores["wordpress"] += 1
+        _append_signal(evidence, f"{label}: wp-includes")
+    if "wp-json" in body or '"wp/v2"' in body or ('"namespaces"' in body and "wp/" in body):
+        scores["wordpress"] += 2
+        _append_signal(evidence, f"{label}: wp-json")
+    if "wordpress" in body or "wordpress" in headers.get("x-pingback", ""):
+        scores["wordpress"] += 2
+        _append_signal(evidence, f"{label}: WordPress marker")
+    return scores
+
+
+def detect_site_profile(
+    urls: list[str],
+    requested: str,
+    *,
+    auth: AuditAuth | None = None,
+    fetcher: Callable[[str, dict[str, str]], FetchResult] | None = None,
+) -> SiteProfileDetection:
+    if requested not in SITE_PROFILES:
+        raise ValueError(f"unknown site-profile {requested!r}; expected one of {SITE_PROFILES}")
+    if requested != "auto":
+        return SiteProfileDetection(
+            requested=requested,
+            resolved=requested,
+            target_urls=tuple(urls),
+            evidence=(f"site profile forced to {requested}",),
+            scores={"nextjs": 0, "wordpress": 0},
+        )
+    if not urls:
+        return SiteProfileDetection(
+            requested=requested,
+            resolved="generic",
+            target_urls=(),
+            evidence=("no live URL targets to profile",),
+            scores={"nextjs": 0, "wordpress": 0},
+        )
+
+    resolved_fetcher = fetcher or _default_fetcher
+    headers = _auth_headers(auth)
+    evidence: list[str] = []
+    errors: list[str] = []
+    totals = {"nextjs": 0, "wordpress": 0}
+
+    for target_url in urls:
+        for label, url in (
+            ("root", target_url),
+            ("wp-json", urljoin(target_url.rstrip("/") + "/", "wp-json/")),
+            ("wp-login", urljoin(target_url.rstrip("/") + "/", "wp-login.php")),
+        ):
+            try:
+                result = resolved_fetcher(url, headers)
+            except (OSError, URLError, TimeoutError, ValueError) as exc:
+                errors.append(f"{url}: {exc}")
+                continue
+            scores = _score_response(label, result, evidence)
+            totals["nextjs"] += scores["nextjs"]
+            totals["wordpress"] += scores["wordpress"]
+
+    if totals["nextjs"] >= 2 and totals["wordpress"] >= 2:
+        resolved = "generic"
+    elif totals["nextjs"] > totals["wordpress"] and totals["nextjs"] >= 2:
+        resolved = "nextjs"
+    elif totals["wordpress"] > totals["nextjs"] and totals["wordpress"] >= 2:
+        resolved = "wordpress"
+    else:
+        resolved = "generic"
+
+    return SiteProfileDetection(
+        requested=requested,
+        resolved=resolved,
+        target_urls=tuple(urls),
+        evidence=tuple(evidence) or ("no framework-specific signals found",),
+        scores=totals,
+        errors=tuple(errors),
+    )
+
+
+def recommended_tools_for_profile(site_profile: str) -> tuple[str, ...]:
+    base = ("httpx", "whatweb", "nuclei", "nikto")
+    if site_profile == "wordpress":
+        return (*base, "wpscan")
+    return base
+
+
+def missing_recommended_tools(
+    site_profile: str,
+    *,
+    path_lookup: Callable[[str], str | None],
+) -> tuple[str, ...]:
+    return tuple(
+        tool for tool in recommended_tools_for_profile(site_profile) if not path_lookup(tool)
+    )
 
 
 MCP_CHDIR_SNIPPET = (
@@ -347,17 +757,28 @@ def worker_prompt(
     job: AuditJob,
     targets_info: list[dict[str, Any]],
     instruction: str,
+    *,
+    auth: AuditAuth | None = None,
 ) -> str:
     target_lines = "\n".join(
         f"- {item.get('original')} ({item.get('type')})" for item in targets_info
     )
     skills = ", ".join(job.skills)
     extra = f"\nAdditional instruction:\n{instruction}\n" if instruction else ""
+    auth_text = ""
+    if auth is not None and auth.has_auth():
+        auth_names = ", ".join(auth.to_env())
+        auth_text = (
+            "\nAuthenticated context is available through these environment variables only: "
+            f"{auth_names}. Use them when testing authenticated coverage. Do not print, log, "
+            "or file the secret values.\n"
+        )
     return (
         f"You are specialist {job.title} for this Strix audit.\n"
         f"Targets:\n{target_lines}\n"
         f"load_skill each of: {skills}\n"
         f"{job.task}\n"
+        f"{auth_text}"
         "File only validated findings with create_vulnerability_report.\n"
         "Coverage todos are not seeded. Do not try to cover every vuln class.\n"
         "Do not spawn sub-agents / Task tools / extra CLI agents.\n"
@@ -419,6 +840,7 @@ def run_jobs(  # noqa: PLR0915
     instruction: str,
     max_workers: int,
     timeout: int,
+    auth: AuditAuth | None = None,
 ) -> tuple[list[JobResult], int]:
     _interrupted.clear()
     local = first_local_path(targets_info)
@@ -469,7 +891,10 @@ def run_jobs(  # noqa: PLR0915
             mcp_path = worker_dir / "mcp.json"
             mcp_path.write_text(json.dumps(mcp_config, indent=2), encoding="utf-8")
 
-            prompt = worker_prompt(job, targets_info, instruction)
+            prompt = worker_prompt(job, targets_info, instruction, auth=auth)
+            worker_env = os.environ.copy()
+            if auth is not None:
+                worker_env.update(auth.to_env())
             if agent == "claude":
                 argv = claude_argv(
                     binary,
@@ -497,6 +922,7 @@ def run_jobs(  # noqa: PLR0915
             proc = subprocess.Popen(  # noqa: S603
                 argv,
                 cwd=plan.worker_cwd,
+                env=worker_env,
                 start_new_session=True,
             )
             _live_procs.append(proc)
