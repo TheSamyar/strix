@@ -53,6 +53,7 @@ from strix.tools.cve_lookup.tools import cve_lookup
 from strix.tools.dedupe.tools import dedupe_reports
 from strix.tools.dep_confusion.tools import check_dependency_confusion
 from strix.tools.diff_response.tools import diff_response
+from strix.tools.endpoint_risk.tools import endpoint_risk_rank
 from strix.tools.frontend_secret_scan.tools import frontend_secret_scan
 from strix.tools.git_recon.tools import git_recon
 from strix.tools.gitleaks_scan.tools import gitleaks_scan
@@ -75,6 +76,8 @@ from strix.tools.nuclei_scan.tools import nuclei_scan
 from strix.tools.oast.tools import oast_get_domain, oast_poll
 from strix.tools.openapi_import.tools import import_openapi
 from strix.tools.osv_scan.tools import osv_scan
+from strix.tools.plan_tests.tools import plan_tests
+from strix.tools.profile_target.tools import profile_target
 from strix.tools.proxy.tools import (
     list_requests,
     list_sitemap,
@@ -143,10 +146,14 @@ You are the pentester. Drive this yourself with your own shell, browser, grep, \
 and HTTP tooling. Only test targets you are authorized to test. Work the phases \
 below in order and do not stop early.
 
-1. HARVEST FIRST — call check_tools, then discover_assets on the seed URL, then \
-walk_unauth, then coverage_report. If coverage_report.walk.incomplete, keep \
-walking until every recorded endpoint and live host has a walk row. This is \
-code-path inventory, not optional recon.
+1. PROFILE, THEN HARVEST — first call profile_target on the seed URL and pass \
+its result to plan_tests: that fingerprints the stack (framework, Supabase/\
+Firebase, GraphQL, JWT, WordPress, …) and seeds a tailored [plan] checklist so \
+you test what THIS target actually needs, not a blanket list. Then check_tools, \
+discover_assets, walk_unauth, and coverage_report; if coverage_report.walk.\
+incomplete, keep walking until every recorded endpoint and live host has a walk \
+row. Run endpoint_risk_rank on the discovered endpoints and test the highest-\
+scoring ones first. This is code-path inventory, not optional recon.
 
 2. DATA-LEAK PASS EARLY — before lower-impact bug classes, hunt unauthorized \
 data exposure. Map tenants, users, workspaces, projects, conversations, files, \
@@ -201,6 +208,9 @@ stop."""
 # return a clear error when none is reachable.
 _HOST_TOOLS: tuple[FunctionTool, ...] = (
     load_skill,
+    profile_target,
+    plan_tests,
+    endpoint_risk_rank,
     create_vulnerability_report,
     create_dependency_report,
     list_reports,
@@ -335,10 +345,33 @@ def bootstrap_mcp_run(
     hydrate_chains_from_disk(state_dir)
     hydrate_validations_from_disk(state_dir)
     if seed_coverage:
+        _seed_plan_todo()
         _seed_data_leak_todos()
         _seed_coverage_todos()
     state.save_run_data()
     return state
+
+
+def _seed_plan_todo() -> None:
+    """Seed a first-step todo so the audit profiles the target and tailors itself
+    before falling back to the blanket coverage checklist."""
+    created = seed_todos(
+        MCP_AGENT_ID,
+        [
+            {
+                "title": (
+                    "[plan] Profile the target first: call profile_target on the seed URL, "
+                    "then plan_tests to seed a stack-tailored checklist"
+                ),
+                "description": (
+                    "Run profile_target -> plan_tests before broad testing so tool/skill "
+                    "selection fits this target. Then endpoint_risk_rank to test worst-first."
+                ),
+            }
+        ],
+    )
+    if created:
+        logger.info("Seeded target-profiling plan todo for MCP run")
 
 
 def _seed_data_leak_todos() -> None:

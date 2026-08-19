@@ -74,6 +74,7 @@ def test_tools_list_includes_skill_and_report_tools() -> None:
     assert {"cors_probe", "rate_limit_probe", "graphql_introspection", "jwt_audit"} <= names
     assert {"backend_rules_probe", "frontend_secret_scan"} <= names
     assert {"oast_get_domain", "oast_poll", "mcp_tool_poisoning_audit"} <= names
+    assert {"profile_target", "plan_tests", "endpoint_risk_rank"} <= names
     assert "create_agent" not in names
     assert "finish_scan" not in names
 
@@ -257,7 +258,7 @@ def test_prompt_get_injects_target() -> None:
     text = result["messages"][0]["content"]["text"]
     assert "https://x.example" in text
     assert "idor" in text
-    assert "HARVEST FIRST" in text
+    assert "PROFILE, THEN HARVEST" in text
 
 
 @pytest.mark.usefixtures("mcp_run")
