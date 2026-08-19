@@ -83,6 +83,41 @@ def test_tools_list_includes_skill_and_report_tools() -> None:
         "cache_deception_probe",
         "request_smuggling_probe",
     } <= names
+    assert {"graphql_abuse", "coverage_gaps"} <= names
+    assert {
+        "ssr_leak_scan",
+        "data_exposure_probe",
+        "storage_probe",
+        "cache_privacy_probe",
+        "user_enumeration_probe",
+        "mass_assignment_probe",
+        "redirect_probe",
+        "security_headers_probe",
+        "deep_fuzz",
+        "param_discover",
+        "content_discover",
+        "authz_matrix",
+        "stored_probe",
+        "error_leak_probe",
+        "sourcemap_recover",
+        "signed_url_probe",
+        "jwt_confusion",
+        "session_fixation_probe",
+        "reset_token_probe",
+        "oauth_probe",
+        "dos_probe",
+        "csrf_probe",
+        "default_creds",
+        "subdomain_takeover",
+        "graphql_field_leak",
+        "graphql_dos",
+        "upload_probe",
+        "mfa_bypass",
+        "header_leak",
+        "ws_leak",
+        "autopwn",
+        "verify_finding",
+    } <= names
     assert "create_agent" not in names
     assert "finish_scan" not in names
 

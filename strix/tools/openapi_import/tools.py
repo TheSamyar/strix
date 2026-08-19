@@ -28,10 +28,9 @@ _HTTP_METHODS = ("get", "put", "post", "delete", "patch", "head", "options", "tr
 def _load_spec(text: str) -> dict[str, Any]:
     """Parse spec text: JSON first, then YAML (pyyaml is a dependency)."""
     try:
-        return json.loads(text)
+        loaded = json.loads(text)
     except json.JSONDecodeError:
-        pass
-    loaded = yaml.safe_load(text)
+        loaded = yaml.safe_load(text)
     if not isinstance(loaded, dict):
         raise ValueError("spec did not parse to a mapping")  # noqa: TRY004
     return loaded

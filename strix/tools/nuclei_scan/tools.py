@@ -29,7 +29,8 @@ def _parse_jsonl(stdout: str) -> list[dict[str, Any]]:
             continue
         if not isinstance(obj, dict):
             continue
-        info = obj.get("info") if isinstance(obj.get("info"), dict) else {}
+        raw_info = obj.get("info")
+        info = raw_info if isinstance(raw_info, dict) else {}
         findings.append(
             {
                 "template_id": obj.get("template-id"),

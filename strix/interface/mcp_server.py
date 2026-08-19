@@ -33,8 +33,11 @@ from strix.tools.attack_surface.tools import (
 )
 from strix.tools.auth_crawl.tools import auth_crawl
 from strix.tools.auth_probe.tools import session_invalidation_probe
+from strix.tools.authz_matrix.tools import authz_matrix
 from strix.tools.authz_probe.tools import authz_probe
+from strix.tools.autopwn.tools import autopwn, verify_finding
 from strix.tools.backend_rules_probe.tools import backend_rules_probe
+from strix.tools.cache_privacy.tools import cache_privacy_probe
 from strix.tools.chain_suggest.tools import suggest_chains
 from strix.tools.chains.tools import (
     add_chain_step,
@@ -45,6 +48,7 @@ from strix.tools.chains.tools import (
 )
 from strix.tools.cors_probe.tools import cors_probe
 from strix.tools.coverage.tools import coverage_report, scope_coverage
+from strix.tools.coverage_gaps.tools import coverage_gaps
 from strix.tools.credentials.tools import (
     delete_credential,
     get_credential,
@@ -52,22 +56,35 @@ from strix.tools.credentials.tools import (
     list_credentials,
     store_credential,
 )
+from strix.tools.csrf_probe.tools import csrf_probe
 from strix.tools.cve_lookup.tools import cve_lookup
+from strix.tools.data_exposure.tools import data_exposure_probe
 from strix.tools.dedupe.tools import dedupe_reports
+from strix.tools.deep_fuzz.tools import deep_fuzz
+from strix.tools.default_creds.tools import default_creds
 from strix.tools.dep_confusion.tools import check_dependency_confusion
 from strix.tools.desync.tools import cache_deception_probe, request_smuggling_probe
 from strix.tools.diff_response.tools import diff_response
+from strix.tools.discovery.tools import content_discover, param_discover
+from strix.tools.dos_probe.tools import dos_probe
 from strix.tools.endpoint_risk.tools import endpoint_risk_rank
+from strix.tools.error_leak.tools import error_leak_probe
 from strix.tools.frontend_secret_scan.tools import frontend_secret_scan
 from strix.tools.git_recon.tools import git_recon
 from strix.tools.gitleaks_scan.tools import gitleaks_scan
+from strix.tools.graphql_abuse.tools import graphql_abuse
+from strix.tools.graphql_deep.tools import graphql_dos, graphql_field_leak
 from strix.tools.graphql_probe.tools import graphql_introspection
 from strix.tools.harvest.tools import discover_assets, walk_unauth
+from strix.tools.header_leak.tools import header_leak
 from strix.tools.http_replay.tools import http_replay
 from strix.tools.injection_fuzz.tools import injection_fuzz
 from strix.tools.jwt_audit.tools import jwt_audit
+from strix.tools.jwt_confusion.tools import jwt_confusion
 from strix.tools.load_skill.tool import load_skill
+from strix.tools.mass_assignment.tools import mass_assignment_probe
 from strix.tools.mcp_audit.tools import mcp_tool_poisoning_audit
+from strix.tools.mfa_bypass.tools import mfa_bypass
 from strix.tools.notes.tools import (
     create_note,
     delete_note,
@@ -79,6 +96,7 @@ from strix.tools.notes.tools import (
 from strix.tools.npm_audit.tools import npm_audit
 from strix.tools.nuclei_scan.tools import nuclei_scan
 from strix.tools.oast.tools import oast_get_domain, oast_poll
+from strix.tools.oauth_probe.tools import oauth_probe
 from strix.tools.openapi_import.tools import import_openapi
 from strix.tools.osv_scan.tools import osv_scan
 from strix.tools.plan_tests.tools import plan_tests
@@ -95,6 +113,7 @@ from strix.tools.proxy.tools import (
 from strix.tools.race_probe.tools import race_probe
 from strix.tools.rate_limit_probe.tools import rate_limit_probe
 from strix.tools.recon.tools import recon_chain
+from strix.tools.redirect_probe.tools import redirect_probe
 from strix.tools.reporting.tool import (
     create_dependency_report,
     create_vulnerability_report,
@@ -110,6 +129,14 @@ from strix.tools.scanner_deps.tools import (
     missing_tools,
     render_install_report,
 )
+from strix.tools.security_headers.tools import security_headers_probe
+from strix.tools.session_fixation.tools import reset_token_probe, session_fixation_probe
+from strix.tools.signed_url.tools import signed_url_probe
+from strix.tools.sourcemap.tools import sourcemap_recover
+from strix.tools.ssr_leak.tools import ssr_leak_scan
+from strix.tools.storage_probe.tools import storage_probe
+from strix.tools.stored_probe.tools import stored_probe
+from strix.tools.subdomain_takeover.tools import subdomain_takeover
 from strix.tools.todo.tools import (
     create_todo,
     delete_todo,
@@ -120,17 +147,20 @@ from strix.tools.todo.tools import (
     seed_todos,
     update_todo,
 )
+from strix.tools.upload_probe.tools import upload_probe
+from strix.tools.user_enum.tools import user_enumeration_probe
 from strix.tools.validation.tools import (
     hydrate_validations_from_disk,
     retest_findings,
     validate_finding,
 )
 from strix.tools.web_search.tool import web_search
+from strix.tools.ws_leak.tools import ws_leak
 from strix.tools.ws_probe.tools import ws_probe
 
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from agents.tool import FunctionTool
 
@@ -168,7 +198,10 @@ exports, logs, RAG/vector stores, prompts, job IDs, signed URLs, cache keys, \
 and integration payloads. Use at least two identities/tenants when available; \
 store each as a credential and run authz_probe to replay list/view/search/\
 export/download/status endpoints across boundaries and diff status, lengths, \
-and body digests in one call. load_skill data_leakage.
+and body digests in one call. Also: ssr_leak_scan (data embedded in the SSR \
+page), data_exposure_probe (API returns more fields than the UI), storage_probe \
+(exposed .git/.env/backups), and cache_privacy_probe (private data cached / \
+tokens in URLs). load_skill data_leakage.
 
 3. SYSTEMATIC PER-SURFACE x PER-CLASS TESTING — for each endpoint/parameter, \
 test every relevant vulnerability class. Run list_skills to see the packs, and \
@@ -195,9 +228,10 @@ do not redact. Use create_dependency_report for \
 known-CVE dependencies. Track scope, hypotheses, and progress with the notes \
 and todo tools.
 
-6. DON'T DECLARE DONE — call coverage_report again. If walk.incomplete or the \
-coverage checklist still has untested classes, keep going. When finished, call \
-dedupe_reports to merge duplicate findings; after a fix cycle, call \
+6. DON'T DECLARE DONE — call coverage_report and coverage_gaps. If \
+coverage_gaps.thoroughness is not "looks_thorough" (pending classes, or key \
+probes never run), keep going. When finished, call dedupe_reports to merge \
+duplicate findings, suggest_chains to escalate them, and after a fix cycle \
 retest_findings to prove which findings are now closed."""
 
 SPECIALIST_MCP_INSTRUCTIONS = """\
@@ -215,6 +249,8 @@ stop."""
 # return a clear error when none is reachable.
 _HOST_TOOLS: tuple[FunctionTool, ...] = (
     load_skill,
+    autopwn,
+    verify_finding,
     profile_target,
     plan_tests,
     endpoint_risk_rank,
@@ -251,16 +287,48 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     import_openapi,
     http_replay,
     authz_probe,
+    authz_matrix,
+    stored_probe,
     injection_fuzz,
+    deep_fuzz,
+    param_discover,
+    content_discover,
     prompt_injection_probe,
     cors_probe,
     rate_limit_probe,
     graphql_introspection,
+    graphql_abuse,
+    graphql_field_leak,
+    graphql_dos,
+    subdomain_takeover,
+    coverage_gaps,
     jwt_audit,
+    jwt_confusion,
+    session_fixation_probe,
+    reset_token_probe,
     race_probe,
     session_invalidation_probe,
+    user_enumeration_probe,
+    oauth_probe,
+    dos_probe,
+    csrf_probe,
+    default_creds,
+    upload_probe,
+    mfa_bypass,
+    mass_assignment_probe,
+    redirect_probe,
+    security_headers_probe,
     backend_rules_probe,
     frontend_secret_scan,
+    ssr_leak_scan,
+    data_exposure_probe,
+    storage_probe,
+    cache_privacy_probe,
+    error_leak_probe,
+    sourcemap_recover,
+    signed_url_probe,
+    header_leak,
+    ws_leak,
     oast_get_domain,
     oast_poll,
     mcp_tool_poisoning_audit,
@@ -718,7 +786,7 @@ def handle_message(msg: Mapping[str, Any]) -> dict[str, Any] | None:
         return _rpc_error(msg, -32600, "Invalid Request")
     if method.startswith("notifications/"):
         return None
-    handlers: dict[str, Any] = {
+    handlers: dict[str, Callable[[], dict[str, Any]]] = {
         "initialize": lambda: _rpc_result(msg, _initialize_result()),
         "ping": lambda: _rpc_result(msg, {}),
         "tools/list": lambda: _rpc_result(msg, {"tools": mcp_tool_descriptors()}),
@@ -756,7 +824,10 @@ def _read_lsp_body(first_line: bytes) -> dict[str, Any] | None:
     except ValueError:
         length = 0
     raw = sys.stdin.buffer.read(length) if length > 0 else b""
-    return json.loads(raw) if raw else None
+    if not raw:
+        return None
+    parsed = json.loads(raw)
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _read_message() -> dict[str, Any] | None:
@@ -768,7 +839,8 @@ def _read_message() -> dict[str, Any] | None:
     if not stripped:
         return _read_message()
     if stripped[:1] in {b"{", b"["}:
-        return json.loads(stripped)
+        parsed = json.loads(stripped)
+        return parsed if isinstance(parsed, dict) else None
     return _read_lsp_body(line)
 
 
@@ -842,8 +914,6 @@ async def _serve_stdio_async() -> int:
         msg = await queue.get()
         if msg is None:
             break
-        if not isinstance(msg, dict):
-            continue
         if msg.get("method") == "tools/call":
             task = asyncio.create_task(_dispatch_tool_call(msg))
             pending.add(task)
