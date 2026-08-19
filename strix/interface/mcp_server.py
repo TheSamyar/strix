@@ -39,6 +39,7 @@ from strix.tools.chains.tools import (
     hydrate_chains_from_disk,
     list_chains,
 )
+from strix.tools.cors_probe.tools import cors_probe
 from strix.tools.coverage.tools import coverage_report, scope_coverage
 from strix.tools.credentials.tools import (
     delete_credential,
@@ -53,8 +54,10 @@ from strix.tools.dep_confusion.tools import check_dependency_confusion
 from strix.tools.diff_response.tools import diff_response
 from strix.tools.git_recon.tools import git_recon
 from strix.tools.gitleaks_scan.tools import gitleaks_scan
+from strix.tools.graphql_probe.tools import graphql_introspection
 from strix.tools.harvest.tools import discover_assets, walk_unauth
 from strix.tools.http_replay.tools import http_replay
+from strix.tools.jwt_audit.tools import jwt_audit
 from strix.tools.load_skill.tool import load_skill
 from strix.tools.notes.tools import (
     create_note,
@@ -76,6 +79,7 @@ from strix.tools.proxy.tools import (
     view_request,
     view_sitemap_entry,
 )
+from strix.tools.rate_limit_probe.tools import rate_limit_probe
 from strix.tools.recon.tools import recon_chain
 from strix.tools.reporting.tool import (
     create_dependency_report,
@@ -218,6 +222,10 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     import_openapi,
     http_replay,
     authz_probe,
+    cors_probe,
+    rate_limit_probe,
+    graphql_introspection,
+    jwt_audit,
     validate_finding,
     retest_findings,
     diff_response,
