@@ -57,6 +57,7 @@ from strix.tools.credentials.tools import (
 from strix.tools.cve_lookup.tools import cve_lookup
 from strix.tools.data_exposure.tools import data_exposure_probe
 from strix.tools.dedupe.tools import dedupe_reports
+from strix.tools.deep_fuzz.tools import deep_fuzz
 from strix.tools.dep_confusion.tools import check_dependency_confusion
 from strix.tools.desync.tools import cache_deception_probe, request_smuggling_probe
 from strix.tools.diff_response.tools import diff_response
@@ -266,6 +267,7 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     http_replay,
     authz_probe,
     injection_fuzz,
+    deep_fuzz,
     prompt_injection_probe,
     cors_probe,
     rate_limit_probe,
