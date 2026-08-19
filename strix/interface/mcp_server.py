@@ -64,6 +64,7 @@ from strix.tools.desync.tools import cache_deception_probe, request_smuggling_pr
 from strix.tools.diff_response.tools import diff_response
 from strix.tools.discovery.tools import content_discover, param_discover
 from strix.tools.endpoint_risk.tools import endpoint_risk_rank
+from strix.tools.error_leak.tools import error_leak_probe
 from strix.tools.frontend_secret_scan.tools import frontend_secret_scan
 from strix.tools.git_recon.tools import git_recon
 from strix.tools.gitleaks_scan.tools import gitleaks_scan
@@ -120,6 +121,8 @@ from strix.tools.scanner_deps.tools import (
     render_install_report,
 )
 from strix.tools.security_headers.tools import security_headers_probe
+from strix.tools.signed_url.tools import signed_url_probe
+from strix.tools.sourcemap.tools import sourcemap_recover
 from strix.tools.ssr_leak.tools import ssr_leak_scan
 from strix.tools.storage_probe.tools import storage_probe
 from strix.tools.stored_probe.tools import stored_probe
@@ -294,6 +297,9 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     data_exposure_probe,
     storage_probe,
     cache_privacy_probe,
+    error_leak_probe,
+    sourcemap_recover,
+    signed_url_probe,
     oast_get_domain,
     oast_poll,
     mcp_tool_poisoning_audit,
