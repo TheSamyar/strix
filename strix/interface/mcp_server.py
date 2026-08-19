@@ -134,6 +134,13 @@ from strix.tools.scanner_deps.tools import (
 )
 from strix.tools.security_headers.tools import security_headers_probe
 from strix.tools.session_fixation.tools import reset_token_probe, session_fixation_probe
+from strix.tools.shell_session.tools import (
+    close_shell,
+    list_shells,
+    read_shell,
+    shell_exec,
+    start_listener,
+)
 from strix.tools.signed_url.tools import signed_url_probe
 from strix.tools.sourcemap.tools import sourcemap_recover
 from strix.tools.ssr_leak.tools import ssr_leak_scan
@@ -299,6 +306,11 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     xxe_probe,
     lfi_probe,
     nosql_probe,
+    start_listener,
+    list_shells,
+    shell_exec,
+    read_shell,
+    close_shell,
     deep_fuzz,
     param_discover,
     content_discover,
