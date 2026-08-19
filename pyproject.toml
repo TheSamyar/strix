@@ -232,6 +232,15 @@ ignore = [
 # Fake fetcher/connector doubles match a callee signature whose args they ignore.
 "tests/test_dep_confusion.py" = ["ARG001", "ARG005"]
 "tests/test_ws_probe.py" = ["ARG001", "ARG005"]
+# Monkeypatch doubles ignore callee-signature args; fixture JWT secret; pytest
+# is referenced only in annotations here.
+"tests/test_misconfig_probes.py" = ["ARG001", "ARG005", "S105", "TC002"]
+"tests/test_baas_and_secrets.py" = ["ARG001", "ARG005", "S105", "TC002"]
+"tests/test_oast.py" = ["ARG001", "ARG005"]
+"tests/test_target_intel.py" = ["ARG001", "ARG005", "SLF001", "TC002"]
+"tests/test_race_and_auth.py" = ["ARG001", "ARG005", "TC002"]
+"tests/test_injection_and_prompt.py" = ["ARG001", "ARG005", "TC002", "PLC0415"]
+"tests/test_chains_crawl_desync.py" = ["ARG001", "ARG005", "TC002"]
 "tests/test_codex_auth.py" = ["S105", "S106", "SLF001"]
 # Hatchling loads the build hook by path, not as an importable package.
 "scripts/tui_sidecar_hook.py" = ["INP001"]

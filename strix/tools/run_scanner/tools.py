@@ -33,6 +33,13 @@ _ALLOWLIST: dict[str, list[str]] = {
     "crlfuzz": ["crlfuzz", "-u", "{target}", "{extra}"],
     "searchsploit": ["searchsploit", "{target}", "{extra}"],
     "hashid": ["hashid", "{target}", "{extra}"],
+    "dalfox": ["dalfox", "url", "{target}", "{extra}"],
+    "katana": ["katana", "-u", "{target}", "{extra}"],
+    "subfinder": ["subfinder", "-d", "{target}", "{extra}"],
+    "arjun": ["arjun", "-u", "{target}", "{extra}"],
+    "naabu": ["naabu", "-host", "{target}", "{extra}"],
+    "gau": ["gau", "{target}", "{extra}"],
+    "dnsx": ["dnsx", "-d", "{target}", "{extra}"],
 }
 
 
@@ -107,13 +114,17 @@ async def run_scanner(
 
     Only runs scanners on a hardcoded allowlist — ``nmap``, ``sqlmap``,
     ``nikto``, ``httpx``, ``ffuf``, ``wpscan``, ``sslscan``, ``sstimap``,
-    ``commix``, ``whatweb``, ``crlfuzz``, ``searchsploit``, ``hashid`` —
-    against targets the operator is authorized to test; there are no
-    scope guardrails, the operator owns scope. Any other ``tool`` is
-    rejected with a structured error. argv is built as a list and run
-    without a shell, so ``extra_args`` are passed as discrete arguments
-    (no shell-metacharacter injection). ``searchsploit`` / ``hashid``
-    take a query or hash in ``target``, not a URL.
+    ``commix``, ``whatweb``, ``crlfuzz``, ``searchsploit``, ``hashid``,
+    ``dalfox`` (XSS), ``katana`` (crawler), ``subfinder`` (subdomain
+    enum), ``arjun`` (hidden-param discovery), ``naabu`` (port scan),
+    ``gau`` (known URLs), ``dnsx`` (DNS toolkit) — against targets the
+    operator is authorized to test; there are no scope guardrails, the
+    operator owns scope. Any other ``tool`` is rejected with a structured
+    error. argv is built as a list and run without a shell, so
+    ``extra_args`` are passed as discrete arguments (no shell-metacharacter
+    injection). ``searchsploit`` / ``hashid`` take a query or hash in
+    ``target``, not a URL; ``subfinder`` / ``gau`` / ``dnsx`` take a bare
+    domain (e.g. ``example.com``), not a URL.
 
     Returns JSON with ``tool``, ``argv``, ``returncode``, ``stdout`` and
     ``stderr`` (each truncated to 20k chars), and ``timed_out``. If the tool

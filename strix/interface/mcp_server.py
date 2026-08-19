@@ -13,6 +13,8 @@ import json
 import logging
 import sys
 import threading
+import time
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from agents.tool_context import ToolContext
@@ -20,7 +22,7 @@ from agents.tool_context import ToolContext
 from strix.core.paths import runtime_state_dir
 from strix.interface.cli_args import get_version
 from strix.report.state import ReportState, get_global_report_state, set_global_report_state
-from strix.skills import get_available_skills
+from strix.skills import get_available_skills, load_skills
 from strix.tools.attack_surface.tools import (
     auth_matrix,
     hydrate_attack_surface_from_disk,
@@ -29,6 +31,11 @@ from strix.tools.attack_surface.tools import (
     record_endpoint,
     record_role,
 )
+from strix.tools.auth_crawl.tools import auth_crawl
+from strix.tools.auth_probe.tools import session_invalidation_probe
+from strix.tools.authz_probe.tools import authz_probe
+from strix.tools.backend_rules_probe.tools import backend_rules_probe
+from strix.tools.chain_suggest.tools import suggest_chains
 from strix.tools.chains.tools import (
     add_chain_step,
     chain_finding,
@@ -36,6 +43,7 @@ from strix.tools.chains.tools import (
     hydrate_chains_from_disk,
     list_chains,
 )
+from strix.tools.cors_probe.tools import cors_probe
 from strix.tools.coverage.tools import coverage_report, scope_coverage
 from strix.tools.credentials.tools import (
     delete_credential,
@@ -45,13 +53,21 @@ from strix.tools.credentials.tools import (
     store_credential,
 )
 from strix.tools.cve_lookup.tools import cve_lookup
+from strix.tools.dedupe.tools import dedupe_reports
 from strix.tools.dep_confusion.tools import check_dependency_confusion
+from strix.tools.desync.tools import cache_deception_probe, request_smuggling_probe
 from strix.tools.diff_response.tools import diff_response
+from strix.tools.endpoint_risk.tools import endpoint_risk_rank
+from strix.tools.frontend_secret_scan.tools import frontend_secret_scan
 from strix.tools.git_recon.tools import git_recon
 from strix.tools.gitleaks_scan.tools import gitleaks_scan
+from strix.tools.graphql_probe.tools import graphql_introspection
 from strix.tools.harvest.tools import discover_assets, walk_unauth
 from strix.tools.http_replay.tools import http_replay
+from strix.tools.injection_fuzz.tools import injection_fuzz
+from strix.tools.jwt_audit.tools import jwt_audit
 from strix.tools.load_skill.tool import load_skill
+from strix.tools.mcp_audit.tools import mcp_tool_poisoning_audit
 from strix.tools.notes.tools import (
     create_note,
     delete_note,
@@ -62,8 +78,12 @@ from strix.tools.notes.tools import (
 )
 from strix.tools.npm_audit.tools import npm_audit
 from strix.tools.nuclei_scan.tools import nuclei_scan
+from strix.tools.oast.tools import oast_get_domain, oast_poll
 from strix.tools.openapi_import.tools import import_openapi
 from strix.tools.osv_scan.tools import osv_scan
+from strix.tools.plan_tests.tools import plan_tests
+from strix.tools.profile_target.tools import profile_target
+from strix.tools.prompt_injection.tools import prompt_injection_probe
 from strix.tools.proxy.tools import (
     list_requests,
     list_sitemap,
@@ -72,6 +92,8 @@ from strix.tools.proxy.tools import (
     view_request,
     view_sitemap_entry,
 )
+from strix.tools.race_probe.tools import race_probe
+from strix.tools.rate_limit_probe.tools import rate_limit_probe
 from strix.tools.recon.tools import recon_chain
 from strix.tools.reporting.tool import (
     create_dependency_report,
@@ -98,7 +120,11 @@ from strix.tools.todo.tools import (
     seed_todos,
     update_todo,
 )
-from strix.tools.validation.tools import hydrate_validations_from_disk, validate_finding
+from strix.tools.validation.tools import (
+    hydrate_validations_from_disk,
+    retest_findings,
+    validate_finding,
+)
 from strix.tools.web_search.tool import web_search
 from strix.tools.ws_probe.tools import ws_probe
 
@@ -127,18 +153,22 @@ You are the pentester. Drive this yourself with your own shell, browser, grep, \
 and HTTP tooling. Only test targets you are authorized to test. Work the phases \
 below in order and do not stop early.
 
-1. HARVEST FIRST — call check_tools, then discover_assets on the seed URL, then \
-walk_unauth, then coverage_report. If coverage_report.walk.incomplete, keep \
-walking until every recorded endpoint and live host has a walk row. This is \
-code-path inventory, not optional recon.
+1. PROFILE, THEN HARVEST — first call profile_target on the seed URL and pass \
+its result to plan_tests: that fingerprints the stack (framework, Supabase/\
+Firebase, GraphQL, JWT, WordPress, …) and seeds a tailored [plan] checklist so \
+you test what THIS target actually needs, not a blanket list. Then check_tools, \
+discover_assets, walk_unauth, and coverage_report; if coverage_report.walk.\
+incomplete, keep walking until every recorded endpoint and live host has a walk \
+row. Run endpoint_risk_rank on the discovered endpoints and test the highest-\
+scoring ones first. This is code-path inventory, not optional recon.
 
 2. DATA-LEAK PASS EARLY — before lower-impact bug classes, hunt unauthorized \
 data exposure. Map tenants, users, workspaces, projects, conversations, files, \
 exports, logs, RAG/vector stores, prompts, job IDs, signed URLs, cache keys, \
 and integration payloads. Use at least two identities/tenants when available; \
-replay list/view/search/export/download/status endpoints across boundaries and \
-diff status, fields, lengths, digests, and cache headers. load_skill \
-data_leakage.
+store each as a credential and run authz_probe to replay list/view/search/\
+export/download/status endpoints across boundaries and diff status, lengths, \
+and body digests in one call. load_skill data_leakage.
 
 3. SYSTEMATIC PER-SURFACE x PER-CLASS TESTING — for each endpoint/parameter, \
 test every relevant vulnerability class. Run list_skills to see the packs, and \
@@ -150,7 +180,11 @@ first few bugs.
 4. CHAIN AND GO DEEP — test access control (IDOR, horizontal/vertical privilege \
 escalation), authentication/session flaws, business-logic abuse, and multi-step \
 chains, not just single-request bugs. Treat each finding as a pivot: ask what it \
-unlocks next and follow it to maximum impact.
+unlocks next and follow it to maximum impact. For BLIND bugs (blind SSRF, blind \
+XSS, DNS exfil, RCE) call oast_get_domain, plant the domain in the payload, then \
+oast_poll — a callback is the proof. If the target is an AI/LLM app or exposes \
+its own MCP tools, run mcp_tool_poisoning_audit on those tool descriptions and \
+test direct/indirect prompt injection (load_skill llm_prompt_injection).
 
 5. PROVE BEFORE FILING — before create_vulnerability_report, call \
 validate_finding to re-run the PoC and prove the claimed impact (for a data \
@@ -162,7 +196,9 @@ known-CVE dependencies. Track scope, hypotheses, and progress with the notes \
 and todo tools.
 
 6. DON'T DECLARE DONE — call coverage_report again. If walk.incomplete or the \
-coverage checklist still has untested classes, keep going."""
+coverage checklist still has untested classes, keep going. When finished, call \
+dedupe_reports to merge duplicate findings; after a fix cycle, call \
+retest_findings to prove which findings are now closed."""
 
 SPECIALIST_MCP_INSTRUCTIONS = """\
 You are a specialist on a Strix audit. Drive testing with your own shell, \
@@ -179,11 +215,19 @@ stop."""
 # return a clear error when none is reachable.
 _HOST_TOOLS: tuple[FunctionTool, ...] = (
     load_skill,
+    profile_target,
+    plan_tests,
+    endpoint_risk_rank,
+    auth_crawl,
+    suggest_chains,
+    cache_deception_probe,
+    request_smuggling_probe,
     create_vulnerability_report,
     create_dependency_report,
     list_reports,
     get_report,
     executive_summary,
+    dedupe_reports,
     create_note,
     list_notes,
     get_note,
@@ -206,7 +250,22 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     mark_matrix_cell,
     import_openapi,
     http_replay,
+    authz_probe,
+    injection_fuzz,
+    prompt_injection_probe,
+    cors_probe,
+    rate_limit_probe,
+    graphql_introspection,
+    jwt_audit,
+    race_probe,
+    session_invalidation_probe,
+    backend_rules_probe,
+    frontend_secret_scan,
+    oast_get_domain,
+    oast_poll,
+    mcp_tool_poisoning_audit,
     validate_finding,
+    retest_findings,
     diff_response,
     store_credential,
     list_credentials,
@@ -301,10 +360,33 @@ def bootstrap_mcp_run(
     hydrate_chains_from_disk(state_dir)
     hydrate_validations_from_disk(state_dir)
     if seed_coverage:
+        _seed_plan_todo()
         _seed_data_leak_todos()
         _seed_coverage_todos()
     state.save_run_data()
     return state
+
+
+def _seed_plan_todo() -> None:
+    """Seed a first-step todo so the audit profiles the target and tailors itself
+    before falling back to the blanket coverage checklist."""
+    created = seed_todos(
+        MCP_AGENT_ID,
+        [
+            {
+                "title": (
+                    "[plan] Profile the target first: call profile_target on the seed URL, "
+                    "then plan_tests to seed a stack-tailored checklist"
+                ),
+                "description": (
+                    "Run profile_target -> plan_tests before broad testing so tool/skill "
+                    "selection fits this target. Then endpoint_risk_rank to test worst-first."
+                ),
+            }
+        ],
+    )
+    if created:
+        logger.info("Seeded target-profiling plan todo for MCP run")
 
 
 def _seed_data_leak_todos() -> None:
@@ -380,7 +462,11 @@ def _rpc_error(msg: Mapping[str, Any], code: int, message: str) -> dict[str, Any
 def _initialize_result() -> dict[str, Any]:
     return {
         "protocolVersion": PROTOCOL_VERSION,
-        "capabilities": {"tools": {}},
+        "capabilities": {
+            "tools": {},
+            "resources": {},
+            "prompts": {},
+        },
         "serverInfo": {"name": "strix", "version": get_version()},
         "instructions": (
             MCP_INSTRUCTIONS
@@ -394,7 +480,42 @@ def _tool_result(text: str, *, is_error: bool = False) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": text}], "isError": is_error}
 
 
-async def _invoke_host_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+AUDIT_LOG_NAME = "mcp_audit.jsonl"
+_audit_lock = threading.Lock()
+
+
+def _result_chars(result: dict[str, Any]) -> int:
+    content = result.get("content")
+    if isinstance(content, list) and content and isinstance(content[0], dict):
+        return len(str(content[0].get("text", "")))
+    return 0
+
+
+def _audit_log(
+    tool: str, arg_keys: list[str], elapsed_ms: float, *, is_error: bool, result_chars: int
+) -> None:
+    """Append one secret-safe record per tool call. Logs argument KEYS only —
+    never values — so credential secrets never reach disk."""
+    state = get_global_report_state()
+    if state is None:
+        return
+    record = {
+        "ts": datetime.now(tz=UTC).isoformat(),
+        "tool": tool,
+        "arg_keys": arg_keys,
+        "elapsed_ms": round(elapsed_ms, 1),
+        "is_error": is_error,
+        "result_chars": result_chars,
+    }
+    try:
+        path = runtime_state_dir(state.get_run_dir()) / AUDIT_LOG_NAME
+        with _audit_lock, path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError:
+        logger.debug("MCP audit write failed", exc_info=True)
+
+
+async def _run_host_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     if name == "list_skills":
         return _tool_result(json.dumps(get_available_skills(), indent=2))
     tool = _tool_by_name().get(name)
@@ -412,10 +533,29 @@ async def _invoke_host_tool(name: str, arguments: dict[str, Any]) -> dict[str, A
     return _tool_result(text)
 
 
+async def _invoke_host_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    started = time.monotonic()
+    result = await _run_host_tool(name, arguments)
+    _audit_log(
+        name,
+        sorted(arguments),
+        (time.monotonic() - started) * 1000,
+        is_error=bool(result.get("isError")),
+        result_chars=_result_chars(result),
+    )
+    return result
+
+
+def _dict_field(container: Mapping[str, Any], key: str) -> dict[str, Any]:
+    """Return container[key] if it's a dict, else {} — keeps mypy narrowing happy."""
+    value = container.get(key)
+    return value if isinstance(value, dict) else {}
+
+
 def _call_tool_response(msg: Mapping[str, Any]) -> dict[str, Any]:
-    params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+    params = _dict_field(msg, "params")
     name = params.get("name")
-    arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
+    arguments = _dict_field(params, "arguments")
     if not isinstance(name, str) or not name:
         return _rpc_error(msg, -32602, "tools/call requires params.name")
     try:
@@ -424,6 +564,151 @@ def _call_tool_response(msg: Mapping[str, Any]) -> dict[str, Any]:
         logger.exception("MCP tool %s failed", name)
         result = _tool_result(f"{type(exc).__name__}: {exc}", is_error=True)
     return _rpc_result(msg, result)
+
+
+SKILLS_URI = "strix://skills"
+REPORTS_URI = "strix://reports"
+AUDIT_URI = "strix://audit"
+_SKILL_URI_PREFIX = "strix://skill/"
+
+
+def mcp_resource_descriptors() -> list[dict[str, Any]]:
+    """Skill catalog, current findings, and one resource per skill pack.
+
+    Resources let clients that prefer attach-context over tool calls pull a
+    pack or the live findings without a round-trip through load_skill."""
+    resources: list[dict[str, Any]] = [
+        {
+            "uri": SKILLS_URI,
+            "name": "Strix skill catalog",
+            "description": "All pentest knowledge packs grouped by category (JSON).",
+            "mimeType": "application/json",
+        },
+        {
+            "uri": REPORTS_URI,
+            "name": "Strix findings",
+            "description": "Validated vulnerability reports filed this run (JSON).",
+            "mimeType": "application/json",
+        },
+        {
+            "uri": AUDIT_URI,
+            "name": "Strix MCP audit trail",
+            "description": "Every MCP tool call this run: tool, arg keys, timing, error (JSONL).",
+            "mimeType": "application/jsonl",
+        },
+    ]
+    for category, packs in get_available_skills().items():
+        for pack in packs:
+            name = pack.get("name")
+            if not name:
+                continue
+            resources.append(
+                {
+                    "uri": f"{_SKILL_URI_PREFIX}{name}",
+                    "name": f"skill: {name}",
+                    "description": _clip_desc(pack.get("description") or category),
+                    "mimeType": "text/markdown",
+                }
+            )
+    return resources
+
+
+def _resource_contents(uri: str) -> dict[str, Any] | None:
+    if uri == SKILLS_URI:
+        return {
+            "uri": uri,
+            "mimeType": "application/json",
+            "text": json.dumps(get_available_skills(), indent=2),
+        }
+    if uri == REPORTS_URI:
+        state = get_global_report_state()
+        reports = state.get_existing_vulnerabilities() if state is not None else []
+        return {
+            "uri": uri,
+            "mimeType": "application/json",
+            "text": json.dumps(reports, indent=2, default=str),
+        }
+    if uri == AUDIT_URI:
+        return {"uri": uri, "mimeType": "application/jsonl", "text": _read_audit_log()}
+    if uri.startswith(_SKILL_URI_PREFIX):
+        name = uri[len(_SKILL_URI_PREFIX) :]
+        body = load_skills([name]).get(name)
+        if body is None:
+            return None
+        return {"uri": uri, "mimeType": "text/markdown", "text": f"# Skill: {name}\n\n{body}"}
+    return None
+
+
+def _read_audit_log(max_lines: int = 500) -> str:
+    """Return the last ``max_lines`` audit records (JSONL), newest run dir."""
+    state = get_global_report_state()
+    if state is None:
+        return ""
+    path = runtime_state_dir(state.get_run_dir()) / AUDIT_LOG_NAME
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    return "\n".join(lines[-max_lines:])
+
+
+def _read_resource_response(msg: Mapping[str, Any]) -> dict[str, Any]:
+    params = _dict_field(msg, "params")
+    uri = params.get("uri")
+    if not isinstance(uri, str) or not uri:
+        return _rpc_error(msg, -32602, "resources/read requires params.uri")
+    contents = _resource_contents(uri)
+    if contents is None:
+        return _rpc_error(msg, -32602, f"Unknown resource: {uri}")
+    return _rpc_result(msg, {"contents": [contents]})
+
+
+PENTEST_PROMPT = "pentest_target"
+
+
+def mcp_prompt_descriptors() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": PENTEST_PROMPT,
+            "description": (
+                "Seed the full Strix pentest methodology against a target. Injects "
+                "the recon-first, per-surface-per-class playbook so the client can't "
+                "run a shallow ad-hoc audit."
+            ),
+            "arguments": [
+                {"name": "target", "description": "URL, host, or repo to test.", "required": True},
+                {
+                    "name": "focus",
+                    "description": "Optional bug class or surface to prioritize.",
+                    "required": False,
+                },
+            ],
+        }
+    ]
+
+
+def _get_prompt_response(msg: Mapping[str, Any]) -> dict[str, Any]:
+    params = _dict_field(msg, "params")
+    name = params.get("name")
+    if name != PENTEST_PROMPT:
+        return _rpc_error(msg, -32602, f"Unknown prompt: {name}")
+    args = _dict_field(params, "arguments")
+    target = args.get("target")
+    if not isinstance(target, str) or not target:
+        return _rpc_error(msg, -32602, "pentest_target requires arguments.target")
+    focus = args.get("focus")
+    text = f"{MCP_INSTRUCTIONS}\n\nTARGET: {target}"
+    if isinstance(focus, str) and focus:
+        text += f"\nPRIORITIZE: {focus}"
+    return _rpc_result(
+        msg,
+        {
+            "description": f"Strix pentest playbook for {target}",
+            "messages": [
+                {"role": "user", "content": {"type": "text", "text": text}},
+            ],
+        },
+    )
 
 
 def handle_message(msg: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -438,6 +723,10 @@ def handle_message(msg: Mapping[str, Any]) -> dict[str, Any] | None:
         "ping": lambda: _rpc_result(msg, {}),
         "tools/list": lambda: _rpc_result(msg, {"tools": mcp_tool_descriptors()}),
         "tools/call": lambda: _call_tool_response(msg),
+        "resources/list": lambda: _rpc_result(msg, {"resources": mcp_resource_descriptors()}),
+        "resources/read": lambda: _read_resource_response(msg),
+        "prompts/list": lambda: _rpc_result(msg, {"prompts": mcp_prompt_descriptors()}),
+        "prompts/get": lambda: _get_prompt_response(msg),
     }
     handler = handlers.get(method)
     if handler is None:
@@ -483,21 +772,94 @@ def _read_message() -> dict[str, Any] | None:
     return _read_lsp_body(line)
 
 
-def serve_stdio() -> int:
-    """Block on stdin until the MCP client closes the pipe."""
+def _progress_token(params: Mapping[str, Any]) -> str | int | None:
+    """Pull the client's progressToken from params._meta, if any (MCP spec)."""
+    meta = _dict_field(params, "_meta")
+    token = meta.get("progressToken")
+    return token if isinstance(token, (str, int)) else None
+
+
+def _progress_notification(
+    token: str | int, progress: float, total: float | None = None
+) -> dict[str, Any]:
+    params: dict[str, Any] = {"progressToken": token, "progress": progress}
+    if total is not None:
+        params["total"] = total
+    return {"jsonrpc": "2.0", "method": "notifications/progress", "params": params}
+
+
+async def _dispatch_tool_call(msg: Mapping[str, Any]) -> None:
+    """Run one tools/call as its own task so slow scanners don't block the
+    read loop, ping, or other tool calls. Emits start/done progress when the
+    client passed a progressToken."""
+    params = _dict_field(msg, "params")
+    token = _progress_token(params)
+    name = params.get("name")
+    arguments = _dict_field(params, "arguments")
+    if not isinstance(name, str) or not name:
+        _write_message(_rpc_error(msg, -32602, "tools/call requires params.name"))
+        return
+    if token is not None:
+        _write_message(_progress_notification(token, 0.0, 1.0))
+    try:
+        result = await _invoke_host_tool(name, arguments)
+    except Exception as exc:
+        logger.exception("MCP tool %s failed", name)
+        result = _tool_result(f"{type(exc).__name__}: {exc}", is_error=True)
+    if token is not None:
+        _write_message(_progress_notification(token, 1.0, 1.0))
+    _write_message(_rpc_result(msg, result))
+
+
+async def _serve_stdio_async() -> int:
+    """Event loop: a stdin reader thread feeds messages onto a queue; fast
+    methods answer inline, tools/call runs concurrently as tasks. All writes
+    happen on this single loop thread, so stdout stays uncorrupted.
+
+    # ponytail: tool calls share in-memory state (todos/notes/report); the one
+    # client LLM issues calls serially in practice, and concurrency exists so
+    # ping/tools-list stay live during a long scan. Add per-store locks only if
+    # a client is observed firing overlapping state-mutating calls.
+    """
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+    def _reader() -> None:
+        while True:
+            try:
+                msg = _read_message()
+            except json.JSONDecodeError:
+                logger.warning("MCP: skipping non-JSON payload")
+                continue
+            loop.call_soon_threadsafe(queue.put_nowait, msg)
+            if msg is None:
+                return
+
+    threading.Thread(target=_reader, name="strix-mcp-stdin", daemon=True).start()
+
+    pending: set[asyncio.Task[None]] = set()
     while True:
-        try:
-            msg = _read_message()
-        except json.JSONDecodeError:
-            logger.warning("MCP: skipping non-JSON payload")
-            continue
+        msg = await queue.get()
         if msg is None:
-            return 0
+            break
         if not isinstance(msg, dict):
+            continue
+        if msg.get("method") == "tools/call":
+            task = asyncio.create_task(_dispatch_tool_call(msg))
+            pending.add(task)
+            task.add_done_callback(pending.discard)
             continue
         response = handle_message(msg)
         if response is not None:
             _write_message(response)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    return 0
+
+
+def serve_stdio() -> int:
+    """Block on stdin until the MCP client closes the pipe."""
+    return asyncio.run(_serve_stdio_async())
 
 
 def run_mcp(argv: list[str]) -> int:

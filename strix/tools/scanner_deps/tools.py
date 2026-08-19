@@ -120,6 +120,133 @@ SCANNERS: tuple[Scanner, ...] = (
         ],
         note="Needs Ruby; `gem install wpscan` pulls it into the user gem dir.",
     ),
+    Scanner(
+        "dalfox",
+        "dalfox",
+        [
+            ("brew", ["brew", "install", "dalfox"]),
+            ("go", ["go", "install", "github.com/hahwul/dalfox/v2@latest"]),
+        ],
+        note="Parameter-aware XSS scanner.",
+    ),
+    Scanner(
+        "katana",
+        "katana",
+        [
+            ("brew", ["brew", "install", "katana"]),
+            ("go", ["go", "install", "github.com/projectdiscovery/katana/cmd/katana@latest"]),
+        ],
+        note="ProjectDiscovery crawler.",
+    ),
+    Scanner(
+        "subfinder",
+        "subfinder",
+        [
+            ("brew", ["brew", "install", "subfinder"]),
+            (
+                "go",
+                ["go", "install", "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"],
+            ),
+        ],
+        note="Passive subdomain enumeration.",
+    ),
+    Scanner(
+        "arjun",
+        "arjun",
+        [
+            ("pipx", ["pipx", "install", "arjun"]),
+        ],
+        note="Hidden HTTP-parameter discovery.",
+    ),
+    Scanner(
+        "naabu",
+        "naabu",
+        [
+            ("brew", ["brew", "install", "naabu"]),
+            ("go", ["go", "install", "github.com/projectdiscovery/naabu/v2/cmd/naabu@latest"]),
+        ],
+        note="Fast port scanner; may need libpcap for SYN scans.",
+    ),
+    Scanner(
+        "gau",
+        "gau",
+        [
+            ("go", ["go", "install", "github.com/lc/gau/v2/cmd/gau@latest"]),
+        ],
+        note="Fetch known URLs from Wayback/Common Crawl/etc.",
+    ),
+    Scanner(
+        "dnsx",
+        "dnsx",
+        [
+            ("brew", ["brew", "install", "dnsx"]),
+            ("go", ["go", "install", "github.com/projectdiscovery/dnsx/cmd/dnsx@latest"]),
+        ],
+        note="Fast DNS toolkit (resolve, brute, records).",
+    ),
+    # Previously allowlisted in run_scanner but with no installer — filling the
+    # gap so a fresh host can actually run them.
+    Scanner(
+        "sslscan",
+        "sslscan",
+        [
+            ("brew", ["brew", "install", "sslscan"]),
+            ("apt-get", ["apt-get", "install", "-y", "sslscan"]),
+        ],
+        note="TLS/SSL cipher and cert scanner.",
+    ),
+    Scanner(
+        "whatweb",
+        "whatweb",
+        [
+            ("brew", ["brew", "install", "whatweb"]),
+            ("apt-get", ["apt-get", "install", "-y", "whatweb"]),
+        ],
+        note="Web technology fingerprinting.",
+    ),
+    Scanner(
+        "crlfuzz",
+        "crlfuzz",
+        [
+            ("go", ["go", "install", "github.com/dwisiswant0/crlfuzz/cmd/crlfuzz@latest"]),
+        ],
+        note="CRLF injection scanner.",
+    ),
+    Scanner(
+        "commix",
+        "commix",
+        [
+            ("apt-get", ["apt-get", "install", "-y", "commix"]),
+            ("pipx", ["pipx", "install", "commix"]),
+        ],
+        note="Command-injection exploitation tool.",
+    ),
+    Scanner(
+        "hashid",
+        "hashid",
+        [
+            ("pipx", ["pipx", "install", "hashid"]),
+            ("apt-get", ["apt-get", "install", "-y", "hashid"]),
+        ],
+        note="Hash-type identifier.",
+    ),
+    Scanner(
+        "searchsploit",
+        "searchsploit",
+        [
+            ("brew", ["brew", "install", "exploitdb"]),
+            ("apt-get", ["apt-get", "install", "-y", "exploitdb"]),
+        ],
+        note="Exploit-DB offline search (from the exploitdb package).",
+    ),
+    Scanner(
+        "sstimap",
+        "sstimap",
+        [
+            ("pipx", ["pipx", "install", "sstimap"]),
+        ],
+        note="SSTI detection/exploitation (best-effort; upstream is git-based).",
+    ),
 )
 
 _BY_NAME = {s.name: s for s in SCANNERS}
