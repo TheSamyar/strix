@@ -82,6 +82,7 @@ from strix.tools.jwt_confusion.tools import jwt_confusion
 from strix.tools.load_skill.tool import load_skill
 from strix.tools.mass_assignment.tools import mass_assignment_probe
 from strix.tools.mcp_audit.tools import mcp_tool_poisoning_audit
+from strix.tools.mfa_bypass.tools import mfa_bypass
 from strix.tools.notes.tools import (
     create_note,
     delete_note,
@@ -144,6 +145,7 @@ from strix.tools.todo.tools import (
     seed_todos,
     update_todo,
 )
+from strix.tools.upload_probe.tools import upload_probe
 from strix.tools.user_enum.tools import user_enumeration_probe
 from strix.tools.validation.tools import (
     hydrate_validations_from_disk,
@@ -306,6 +308,8 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     dos_probe,
     csrf_probe,
     default_creds,
+    upload_probe,
+    mfa_bypass,
     mass_assignment_probe,
     redirect_probe,
     security_headers_probe,

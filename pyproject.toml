@@ -253,6 +253,7 @@ ignore = [
 "tests/test_oauth_dos.py" = ["ARG001", "ARG005", "TC002"]
 "tests/test_csrf_creds.py" = ["ARG001", "ARG005", "S105", "S106", "TC002"]
 "tests/test_subdomain_graphqldeep.py" = ["ARG001", "ARG005", "S105", "TC002"]
+"tests/test_upload_mfa.py" = ["ARG001", "ARG005", "TC002"]
 "tests/test_codex_auth.py" = ["S105", "S106", "SLF001"]
 # Hatchling loads the build hook by path, not as an importable package.
 "scripts/tui_sidecar_hook.py" = ["INP001"]

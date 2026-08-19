@@ -111,6 +111,8 @@ def test_tools_list_includes_skill_and_report_tools() -> None:
         "subdomain_takeover",
         "graphql_field_leak",
         "graphql_dos",
+        "upload_probe",
+        "mfa_bypass",
     } <= names
     assert "create_agent" not in names
     assert "finish_scan" not in names
