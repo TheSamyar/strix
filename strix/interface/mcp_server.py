@@ -31,9 +31,11 @@ from strix.tools.attack_surface.tools import (
     record_endpoint,
     record_role,
 )
+from strix.tools.auth_crawl.tools import auth_crawl
 from strix.tools.auth_probe.tools import session_invalidation_probe
 from strix.tools.authz_probe.tools import authz_probe
 from strix.tools.backend_rules_probe.tools import backend_rules_probe
+from strix.tools.chain_suggest.tools import suggest_chains
 from strix.tools.chains.tools import (
     add_chain_step,
     chain_finding,
@@ -53,6 +55,7 @@ from strix.tools.credentials.tools import (
 from strix.tools.cve_lookup.tools import cve_lookup
 from strix.tools.dedupe.tools import dedupe_reports
 from strix.tools.dep_confusion.tools import check_dependency_confusion
+from strix.tools.desync.tools import cache_deception_probe, request_smuggling_probe
 from strix.tools.diff_response.tools import diff_response
 from strix.tools.endpoint_risk.tools import endpoint_risk_rank
 from strix.tools.frontend_secret_scan.tools import frontend_secret_scan
@@ -215,6 +218,10 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     profile_target,
     plan_tests,
     endpoint_risk_rank,
+    auth_crawl,
+    suggest_chains,
+    cache_deception_probe,
+    request_smuggling_probe,
     create_vulnerability_report,
     create_dependency_report,
     list_reports,

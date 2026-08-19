@@ -77,6 +77,12 @@ def test_tools_list_includes_skill_and_report_tools() -> None:
     assert {"profile_target", "plan_tests", "endpoint_risk_rank"} <= names
     assert {"race_probe", "session_invalidation_probe"} <= names
     assert {"injection_fuzz", "prompt_injection_probe"} <= names
+    assert {
+        "auth_crawl",
+        "suggest_chains",
+        "cache_deception_probe",
+        "request_smuggling_probe",
+    } <= names
     assert "create_agent" not in names
     assert "finish_scan" not in names
 
