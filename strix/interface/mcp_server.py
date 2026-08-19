@@ -126,6 +126,7 @@ from strix.tools.todo.tools import (
     seed_todos,
     update_todo,
 )
+from strix.tools.user_enum.tools import user_enumeration_probe
 from strix.tools.validation.tools import (
     hydrate_validations_from_disk,
     retest_findings,
@@ -271,6 +272,7 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     jwt_audit,
     race_probe,
     session_invalidation_probe,
+    user_enumeration_probe,
     backend_rules_probe,
     frontend_secret_scan,
     ssr_leak_scan,

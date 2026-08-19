@@ -89,6 +89,7 @@ def test_tools_list_includes_skill_and_report_tools() -> None:
         "data_exposure_probe",
         "storage_probe",
         "cache_privacy_probe",
+        "user_enumeration_probe",
     } <= names
     assert "create_agent" not in names
     assert "finish_scan" not in names
