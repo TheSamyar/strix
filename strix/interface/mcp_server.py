@@ -159,6 +159,7 @@ from strix.tools.validation.tools import (
 from strix.tools.web_search.tool import web_search
 from strix.tools.ws_leak.tools import ws_leak
 from strix.tools.ws_probe.tools import ws_probe
+from strix.tools.xxe_probe.tools import xxe_probe
 
 
 if TYPE_CHECKING:
@@ -293,6 +294,7 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     stored_probe,
     injection_fuzz,
     ssrf_probe,
+    xxe_probe,
     deep_fuzz,
     param_discover,
     content_discover,

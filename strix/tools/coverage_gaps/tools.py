@@ -104,6 +104,8 @@ def _surface_gaps(ran: set[str] | None) -> list[str]:
         )
     if "graphql" in blob and not ({"graphql_abuse", "graphql_introspection"} & ran):
         gaps.append("GraphQL endpoint mapped but graphql_abuse/introspection never ran")
+    if any(w in blob for w in ("xml", "soap", "saml", ".svg")) and "xxe_probe" not in ran:
+        gaps.append("XML/SOAP endpoint mapped but xxe_probe never ran (XXE file read/SSRF)")
     if any(w in blob for w in ("upload", "attachment", "/file", "multipart")) and (
         "upload_probe" not in ran
     ):
