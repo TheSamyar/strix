@@ -74,6 +74,46 @@ def test_deep_extends_standard() -> None:
     assert len(ids) == 8
 
 
+def test_generic_tasks_name_mcp_tools_and_share_prefix() -> None:
+    jobs = {job.id: job for job in jobs_for_mode("deep")}
+    assert "profile_target" in jobs["recon"].task
+    assert "authz_probe" in jobs["access"].task
+    assert "race_probe" in jobs["logic"].task
+    assert any(word in jobs["logic"].task.lower() for word in ("checkout", "invite", "reset"))
+    assert "jwt_audit" in jobs["auth"].task
+    assert "injection_fuzz" in jobs["injection"].task
+    assert "ssrf_probe" in jobs["ssrf_files"].task
+    assert "gitleaks_scan" in jobs["secrets_deps"].task
+    assert "stored_probe" in jobs["deser_ssti"].task
+    for job in jobs.values():
+        lowered = job.task.lower()
+        assert "do not re-harvest" in lowered
+        assert "validate_finding" in job.task
+        assert "do not spawn sub-agents" in lowered
+
+
+def test_profile_jobs_keep_ids_and_skip_generic_prefix() -> None:
+    nextjs = jobs_for_mode("quick", site_profile="nextjs")
+    wordpress = jobs_for_mode("quick", site_profile="wordpress")
+    fastapi = jobs_for_mode("quick", site_profile="fastapi")
+    assert [job.id for job in nextjs] == [
+        "nextjs_recon",
+        "nextjs_routes",
+        "nextjs_auth_cache",
+        "nextjs_injection_ssrf",
+    ]
+    assert [job.id for job in wordpress] == [
+        "wordpress_recon",
+        "wordpress_components",
+        "wordpress_auth_access",
+        "wordpress_injection_uploads",
+    ]
+    assert fastapi[1].id == "fastapi_auth"
+    assert "do not re-harvest" not in nextjs[0].task
+    assert "do not re-harvest" not in wordpress[0].task
+    assert "do not re-harvest" not in fastapi[1].task
+
+
 def test_site_profile_choices_are_public_cli_values() -> None:
     assert SITE_PROFILES == ("auto", "generic", "nextjs", "wordpress", "fastapi")
 
@@ -123,8 +163,7 @@ def test_auto_detects_nextjs_from_root_html() -> None:
             status=200,
             headers={"x-powered-by": "Next.js"},
             body=(
-                '<script id="__NEXT_DATA__">{}</script>'
-                '<script src="/_next/static/app.js"></script>'
+                '<script id="__NEXT_DATA__">{}</script><script src="/_next/static/app.js"></script>'
             ),
         )
 

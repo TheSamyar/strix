@@ -134,30 +134,44 @@ _FASTAPI_AUTH = AuditJob(
     "Test OAuth/DCR/CORS, X-Admin-Impersonate-*, and FastAPI auth dependencies.",
 )
 
+_GENERIC_TASK_PREFIX = (
+    "Read attack-surface / walk artifacts already on disk for this run; do not re-harvest. "
+    "Prove with validate_finding before create_vulnerability_report. "
+    "Stay inside this specialist class; do not spawn sub-agents. "
+)
+
 _QUICK: tuple[AuditJob, ...] = (
     AuditJob(
         "recon",
         "Recon specialist",
         ("asset_discovery",),
-        "Map the attack surface. Do not deep-exploit.",
+        _GENERIC_TASK_PREFIX
+        + "Run profile_target, discover_assets, and walk_unauth; persist surfaces with "
+        "record_endpoint; file gaps via coverage_report. Do not deep-exploit.",
     ),
     AuditJob(
         "auth",
         "Auth specialist",
         ("authentication_jwt", "csrf"),
-        "Test authentication, session, JWT, and CSRF.",
+        _GENERIC_TASK_PREFIX
+        + "Run jwt_audit, session_invalidation_probe, csrf_probe, and oauth_probe; persist "
+        "usable creds with store_credential.",
     ),
     AuditJob(
         "injection",
         "Injection specialist",
         ("sql_injection", "xss", "rce"),
-        "Test SQLi, XSS, and RCE. Prove with a PoC before filing.",
+        _GENERIC_TASK_PREFIX
+        + "Run param_discover, then injection_fuzz, stored_probe, and deep_fuzz on SQLi, XSS, "
+        "and RCE surfaces.",
     ),
     AuditJob(
         "access",
         "Access-control specialist",
         ("idor", "broken_function_level_authorization"),
-        "Test IDOR and broken function-level authorization.",
+        _GENERIC_TASK_PREFIX
+        + "Run authz_probe and authz_matrix; re-check unauth reachability with walk_unauth for "
+        "IDOR and function-level authorization.",
     ),
 )
 _STANDARD_EXTRA: tuple[AuditJob, ...] = (
@@ -165,13 +179,14 @@ _STANDARD_EXTRA: tuple[AuditJob, ...] = (
         "ssrf_files",
         "SSRF and files specialist",
         ("ssrf", "path_traversal_lfi_rfi", "insecure_file_uploads"),
-        "Test SSRF, path traversal, and file uploads.",
+        _GENERIC_TASK_PREFIX + "Run ssrf_probe, lfi_probe, upload_probe, and xxe_probe.",
     ),
     AuditJob(
         "secrets_deps",
         "Secrets and deps specialist",
         ("information_disclosure", "dependency_cve_scanning"),
-        "Find secrets and known-CVE dependencies.",
+        _GENERIC_TASK_PREFIX
+        + "Run frontend_secret_scan, gitleaks_scan, osv_scan, and storage_probe.",
     ),
 )
 _DEEP_EXTRA: tuple[AuditJob, ...] = (
@@ -179,13 +194,17 @@ _DEEP_EXTRA: tuple[AuditJob, ...] = (
         "logic",
         "Logic specialist",
         ("business_logic", "race_conditions"),
-        "Test business logic and race conditions.",
+        _GENERIC_TASK_PREFIX
+        + "This is the business-logic pass: run race_probe and authz_probe on checkout, "
+        "password-reset, invite, and admin workflows.",
     ),
     AuditJob(
         "deser_ssti",
         "Deser/SSTI specialist",
         ("insecure_deserialization", "ssti"),
-        "Test insecure deserialization and SSTI.",
+        _GENERIC_TASK_PREFIX
+        + "Test insecure deserialization and SSTI; run stored_probe and injection_fuzz on "
+        "template parameters.",
     ),
 )
 
