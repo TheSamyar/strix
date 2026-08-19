@@ -95,6 +95,14 @@ def test_off_allowlist_rejected_without_subprocess(monkeypatch: pytest.MonkeyPat
             ["subfinder", "-d", "example.com", "-silent"],
         ),
         ("arjun", "https://x/api", ["-m", "GET"], ["arjun", "-u", "https://x/api", "-m", "GET"]),
+        (
+            "naabu",
+            "1.2.3.4",
+            ["-top-ports", "100"],
+            ["naabu", "-host", "1.2.3.4", "-top-ports", "100"],
+        ),
+        ("gau", "example.com", ["--threads", "5"], ["gau", "example.com", "--threads", "5"]),
+        ("dnsx", "example.com", ["-a"], ["dnsx", "-d", "example.com", "-a"]),
     ],
 )
 def test_argv_built_as_list_never_shell(

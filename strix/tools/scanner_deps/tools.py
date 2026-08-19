@@ -158,6 +158,32 @@ SCANNERS: tuple[Scanner, ...] = (
         ],
         note="Hidden HTTP-parameter discovery.",
     ),
+    Scanner(
+        "naabu",
+        "naabu",
+        [
+            ("brew", ["brew", "install", "naabu"]),
+            ("go", ["go", "install", "github.com/projectdiscovery/naabu/v2/cmd/naabu@latest"]),
+        ],
+        note="Fast port scanner; may need libpcap for SYN scans.",
+    ),
+    Scanner(
+        "gau",
+        "gau",
+        [
+            ("go", ["go", "install", "github.com/lc/gau/v2/cmd/gau@latest"]),
+        ],
+        note="Fetch known URLs from Wayback/Common Crawl/etc.",
+    ),
+    Scanner(
+        "dnsx",
+        "dnsx",
+        [
+            ("brew", ["brew", "install", "dnsx"]),
+            ("go", ["go", "install", "github.com/projectdiscovery/dnsx/cmd/dnsx@latest"]),
+        ],
+        note="Fast DNS toolkit (resolve, brute, records).",
+    ),
 )
 
 _BY_NAME = {s.name: s for s in SCANNERS}
