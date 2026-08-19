@@ -71,6 +71,7 @@ from strix.tools.http_replay.tools import http_replay
 from strix.tools.injection_fuzz.tools import injection_fuzz
 from strix.tools.jwt_audit.tools import jwt_audit
 from strix.tools.load_skill.tool import load_skill
+from strix.tools.mass_assignment.tools import mass_assignment_probe
 from strix.tools.mcp_audit.tools import mcp_tool_poisoning_audit
 from strix.tools.notes.tools import (
     create_note,
@@ -99,6 +100,7 @@ from strix.tools.proxy.tools import (
 from strix.tools.race_probe.tools import race_probe
 from strix.tools.rate_limit_probe.tools import rate_limit_probe
 from strix.tools.recon.tools import recon_chain
+from strix.tools.redirect_probe.tools import redirect_probe
 from strix.tools.reporting.tool import (
     create_dependency_report,
     create_vulnerability_report,
@@ -114,6 +116,7 @@ from strix.tools.scanner_deps.tools import (
     missing_tools,
     render_install_report,
 )
+from strix.tools.security_headers.tools import security_headers_probe
 from strix.tools.ssr_leak.tools import ssr_leak_scan
 from strix.tools.storage_probe.tools import storage_probe
 from strix.tools.todo.tools import (
@@ -273,6 +276,9 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     race_probe,
     session_invalidation_probe,
     user_enumeration_probe,
+    mass_assignment_probe,
+    redirect_probe,
+    security_headers_probe,
     backend_rules_probe,
     frontend_secret_scan,
     ssr_leak_scan,
