@@ -164,7 +164,40 @@ async def test_report_with_failed_validation_rejected(
     assert not report_state.vulnerability_reports
 
 
-async def test_report_without_validation_still_files(report_state: ReportState) -> None:
+@pytest.mark.parametrize("validation_id", [None, "", "   "])
+async def test_report_without_validation_id_rejected(
+    report_state: ReportState,
+    monkeypatch: pytest.MonkeyPatch,
+    validation_id: str | None,
+) -> None:
+    monkeypatch.delenv("STRIX_REQUIRE_VALIDATION", raising=False)
+    result = await _do_create(**_valid_report_kwargs(), validation_id=validation_id)
+    assert result["success"] is False
+    joined = " ".join(result["errors"])
+    assert "validate_finding" in joined
+    assert "validation_id" in joined
+    assert "required" in joined.lower()
+    assert not report_state.vulnerability_reports
+
+
+@pytest.mark.parametrize("hatch", ["0", "false", "no", "FALSE"])
+async def test_report_without_validation_id_allowed_when_requirement_disabled(
+    report_state: ReportState,
+    monkeypatch: pytest.MonkeyPatch,
+    hatch: str,
+) -> None:
+    monkeypatch.setenv("STRIX_REQUIRE_VALIDATION", hatch)
     result = await _do_create(**_valid_report_kwargs())
     assert result["success"] is True
     assert report_state.vulnerability_reports[0]["validated"] is False
+
+
+async def test_failed_validation_id_rejected_even_when_requirement_disabled(
+    report_state: ReportState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STRIX_REQUIRE_VALIDATION", "0")
+    monkeypatch.setattr(validation, "get_validation", lambda _id: None)
+    result = await _do_create(**_valid_report_kwargs(), validation_id="missing")
+    assert result["success"] is False
+    assert any("did not pass" in e for e in result["errors"])
+    assert not report_state.vulnerability_reports

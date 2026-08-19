@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 from pathlib import PurePosixPath
 from typing import Any
@@ -311,6 +312,13 @@ _REQUIRED_FIELDS = {
 }
 
 _VALID_FIX_EFFORT = frozenset({"trivial", "low", "medium", "high"})
+_VALIDATION_HATCH = frozenset({"0", "false", "no"})
+
+
+def _validation_id_required() -> bool:
+    """True unless STRIX_REQUIRE_VALIDATION is 0/false/no (tests/operators)."""
+    raw = (os.environ.get("STRIX_REQUIRE_VALIDATION") or "").strip().lower()
+    return raw not in _VALIDATION_HATCH
 
 
 async def _do_create(  # noqa: PLR0912, PLR0915
@@ -393,17 +401,23 @@ async def _do_create(  # noqa: PLR0912, PLR0915
         if cwe_err:
             errors.append(cwe_err)
 
-    # Auto-validation gate: if a validation_id is given it must reference a
-    # passing validate_finding record; its proof rides along onto the report.
+    # Auto-validation gate: a passing validate_finding id is required; its
+    # proof rides along onto the report. Blank/missing ids are rejected.
     validated = False
     validation_proof: str | None = None
-    if validation_id:
+    vid = (validation_id or "").strip()
+    if not vid:
+        if _validation_id_required():
+            errors.append(
+                "validation_id is required: run validate_finding first and pass the returned id"
+            )
+    else:
         from strix.tools.validation.tools import get_validation
 
-        record = get_validation(validation_id)
+        record = get_validation(vid)
         if record is None or not record.get("validated"):
             errors.append(
-                f"validation_id {validation_id} not found or did not pass; "
+                f"validation_id {vid} not found or did not pass; "
                 "run validate_finding and pass a passing id"
             )
         else:
@@ -552,7 +566,8 @@ async def create_vulnerability_report(
     """File a vulnerability report — one report per fully-verified finding.
 
     **When to file**: you have a concrete vulnerability with a working
-    proof-of-concept and you're 100% sure it's a real issue.
+    proof-of-concept, a passing ``validate_finding`` id, and you're 100%
+    sure it's a real issue. Pass that id as ``validation_id``.
 
     **When NOT to file**:
 
@@ -828,11 +843,10 @@ async def create_vulnerability_report(
             fix (summary + rationale). Prose/markdown only — the code
             change itself belongs in ``code_locations``. Omit for
             black-box findings.
-        validation_id: Optional id from a passing ``validate_finding``
-            run. When provided it must reference a validation whose
-            ``validated`` is true; the report is then marked validated and
-            its ``proof_excerpt`` is attached. A missing or failed id
-            rejects the report.
+        validation_id: **Required.** Id from a passing ``validate_finding``
+            run. Must reference a validation whose ``validated`` is true;
+            the report is then marked validated and its ``proof_excerpt``
+            is attached. Missing, blank, or failed ids reject the report.
 
     Example (abbreviated — mirror this structure)::
 

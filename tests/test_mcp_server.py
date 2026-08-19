@@ -36,6 +36,7 @@ def reset_advertised_tools() -> Iterator[None]:
 @pytest.fixture
 def mcp_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("STRIX_REQUIRE_VALIDATION", "0")
     report_state_mod._global_report_state = None
     bootstrap_mcp_run("mcp-test")
     yield

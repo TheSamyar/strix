@@ -65,6 +65,13 @@ def report_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ReportState
     return state
 
 
+@pytest.fixture(autouse=True)
+def _disable_validation_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests cover other report gates; the validation_id requirement
+    # is tested in test_validation.py.
+    monkeypatch.setenv("STRIX_REQUIRE_VALIDATION", "0")
+
+
 async def test_create_report_persists_new_fields(report_state: ReportState) -> None:
     result = await _do_create(
         title="Reflected XSS in search",
@@ -1008,6 +1015,8 @@ def test_tool_descriptions_include_formatting_guidance() -> None:
     vuln_desc = create_vulnerability_report.description
     assert "markdown" in vuln_desc.lower()
     assert "fenced code" in vuln_desc.lower()
+    assert "validate_finding" in vuln_desc
+    assert "validation_id" in vuln_desc
 
     finish_desc = finish_scan.description
     assert "markdown" in finish_desc.lower()
