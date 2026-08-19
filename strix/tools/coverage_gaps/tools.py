@@ -128,6 +128,10 @@ def _surface_gaps(ran: set[str] | None) -> list[str]:
         )
     if has_auth_gated and not ({"authz_probe", "walk_unauth"} & ran):
         gaps.append("auth-gated endpoints mapped but broken-access-control never tested")
+    if any(w in blob for w in ("login", "signin", "sign-in", "/auth", "authenticate")) and (
+        "nosql_probe" not in ran
+    ):
+        gaps.append("login/auth endpoint mapped but nosql_probe never ran (NoSQLi auth bypass)")
     if endpoints and "stored_probe" not in ran:
         gaps.append("second-order/stored injection (stored_probe) never attempted")
     return gaps

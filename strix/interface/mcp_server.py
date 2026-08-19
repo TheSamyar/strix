@@ -87,6 +87,7 @@ from strix.tools.local_scan.tools import local_security_scan
 from strix.tools.mass_assignment.tools import mass_assignment_probe
 from strix.tools.mcp_audit.tools import mcp_tool_poisoning_audit
 from strix.tools.mfa_bypass.tools import mfa_bypass
+from strix.tools.nosql_probe.tools import nosql_probe
 from strix.tools.notes.tools import (
     create_note,
     delete_note,
@@ -297,6 +298,7 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     ssrf_probe,
     xxe_probe,
     lfi_probe,
+    nosql_probe,
     deep_fuzz,
     param_discover,
     content_discover,
