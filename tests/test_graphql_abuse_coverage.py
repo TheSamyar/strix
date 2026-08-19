@@ -133,7 +133,7 @@ def test_surface_gaps_flag_untested_deep_classes() -> None:
     # once the deep tools ran, the surface gaps clear (matrix bookkeeping optional)
     ran = {
         "authz_probe", "graphql_abuse", "upload_probe", "injection_fuzz",
-        "stored_probe", "ssrf_probe",
+        "stored_probe", "ssrf_probe", "lfi_probe",
     }
     assert _surface_gaps(ran) == []
     _reset_surface()

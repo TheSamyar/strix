@@ -81,6 +81,7 @@ from strix.tools.http_replay.tools import http_replay
 from strix.tools.injection_fuzz.tools import injection_fuzz
 from strix.tools.jwt_audit.tools import jwt_audit
 from strix.tools.jwt_confusion.tools import jwt_confusion
+from strix.tools.lfi_probe.tools import lfi_probe
 from strix.tools.load_skill.tool import load_skill
 from strix.tools.local_scan.tools import local_security_scan
 from strix.tools.mass_assignment.tools import mass_assignment_probe
@@ -295,6 +296,7 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     injection_fuzz,
     ssrf_probe,
     xxe_probe,
+    lfi_probe,
     deep_fuzz,
     param_discover,
     content_discover,

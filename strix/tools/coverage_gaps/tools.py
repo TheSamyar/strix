@@ -92,9 +92,13 @@ def _surface_gaps(ran: set[str] | None) -> list[str]:
         "url", "uri", "link", "src", "image", "img", "file", "path", "dest",
         "redirect", "next", "target", "webhook", "callback", "feed", "proxy", "host",
     }
-    has_ssrf_param = any(
-        str(p).lower() in _ssrf_names for e in endpoints for p in (e.get("params") or [])
-    )
+    _lfi_names = {
+        "file", "path", "page", "template", "include", "doc", "download", "filename",
+        "dir", "folder", "view", "lang", "locale", "load", "read", "src",
+    }
+    params_lower = {str(p).lower() for e in endpoints for p in (e.get("params") or [])}
+    has_ssrf_param = bool(params_lower & _ssrf_names)
+    has_lfi_param = bool(params_lower & _lfi_names)
     roles = int(matrix.get("roles", 0))
 
     if roles >= 2 and not ({"authz_probe", "authz_matrix"} & ran):
@@ -116,6 +120,11 @@ def _surface_gaps(ran: set[str] | None) -> list[str]:
         gaps.append(
             "SSRF-prone param (url/redirect/webhook/…) mapped but ssrf_probe never "
             "ran — deep-test for metadata/internal/file:// SSRF"
+        )
+    if has_lfi_param and "lfi_probe" not in ran:
+        gaps.append(
+            "file/path param (file/path/template/include/…) mapped but lfi_probe "
+            "never ran — deep-test path traversal / LFI"
         )
     if has_auth_gated and not ({"authz_probe", "walk_unauth"} & ran):
         gaps.append("auth-gated endpoints mapped but broken-access-control never tested")
