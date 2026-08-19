@@ -164,3 +164,25 @@ def test_not_installed_returns_structured_error(monkeypatch: pytest.MonkeyPatch)
     result = _run_scanner_impl("nmap", "1.2.3.4", None, 300)
     assert result["success"] is False
     assert "not installed" in result["error"]
+
+
+def test_every_allowlisted_web_tool_has_a_skill_doc() -> None:
+    """Each run_scanner allowlist entry ships a tooling skill so agents know its
+    syntax. Guards the allowlist<->skill drift that left amass undocumented."""
+    import re
+    from pathlib import Path
+
+    from strix.tools.run_scanner.tools import _ALLOWLIST
+
+    skill_dir = Path(__file__).resolve().parents[1] / "strix" / "skills" / "tooling"
+    skills = {p.stem for p in skill_dir.glob("*.md")}
+    missing = sorted(set(_ALLOWLIST) - skills)
+    assert not missing, f"allowlisted tools without a tooling skill: {missing}"
+
+    # No skill's run_scanner(tool="X") example may reference an off-allowlist tool.
+    bad: list[str] = []
+    for md in skill_dir.glob("*.md"):
+        for tool in re.findall(r'run_scanner\(tool="([a-z0-9_]+)"', md.read_text()):
+            if tool not in _ALLOWLIST:
+                bad.append(f"{md.name}:{tool}")
+    assert not bad, f"skills referencing non-allowlisted run_scanner tools: {bad}"

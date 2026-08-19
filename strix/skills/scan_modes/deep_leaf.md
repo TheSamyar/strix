@@ -11,11 +11,16 @@ do not re-scan the whole target or re-run reconnaissance.
 
 ## Use shared recon — do not repeat it
 
-The root agent's recon has already run. Read the shared recon manifest instead of
-re-discovering:
+The root agent's recon runs once and is distilled into `/workspace/recon.json`
+(assets, tech stack, endpoints, parameters, auth model, notable signals). Read it
+instead of re-discovering: `grep`/`sed -n` the fields you need.
 
-`sed -n / grep the file at /workspace/recon.json` (assets, tech stack, endpoints,
-parameters, auth model, notable signals).
+- If the file is **absent** (recon not finished, or you were spawned early), do
+  NOT re-run full recon — do a minimal targeted look at just your surface and
+  proceed.
+- If **your** assignment IS reconnaissance, write your distilled findings to
+  `/workspace/recon.json` as the deliverable (keep raw tool output in its spill
+  file; the manifest is the curated index the other agents read).
 
 Only run a tool yourself when your specific test needs data the manifest lacks.
 
