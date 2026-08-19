@@ -61,6 +61,7 @@ from strix.tools.deep_fuzz.tools import deep_fuzz
 from strix.tools.dep_confusion.tools import check_dependency_confusion
 from strix.tools.desync.tools import cache_deception_probe, request_smuggling_probe
 from strix.tools.diff_response.tools import diff_response
+from strix.tools.discovery.tools import content_discover, param_discover
 from strix.tools.endpoint_risk.tools import endpoint_risk_rank
 from strix.tools.frontend_secret_scan.tools import frontend_secret_scan
 from strix.tools.git_recon.tools import git_recon
@@ -268,6 +269,8 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     authz_probe,
     injection_fuzz,
     deep_fuzz,
+    param_discover,
+    content_discover,
     prompt_injection_probe,
     cors_probe,
     rate_limit_probe,

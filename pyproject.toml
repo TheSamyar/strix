@@ -246,6 +246,7 @@ ignore = [
 "tests/test_user_enum.py" = ["ARG001", "ARG005", "TC002"]
 "tests/test_massassign_redirect_headers.py" = ["ARG001", "ARG005", "TC002", "PLC0415"]
 "tests/test_deep_fuzz.py" = ["ARG001", "ARG005", "TC002"]
+"tests/test_discovery.py" = ["ARG001", "ARG005", "TC002"]
 "tests/test_codex_auth.py" = ["S105", "S106", "SLF001"]
 # Hatchling loads the build hook by path, not as an importable package.
 "scripts/tui_sidecar_hook.py" = ["INP001"]
