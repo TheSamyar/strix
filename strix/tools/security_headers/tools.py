@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 from agents import RunContextWrapper, function_tool
 
+from strix.tools.batching import url_batch
 from strix.tools.http_replay.tools import _replay_impl
 
 
@@ -83,7 +84,9 @@ def _security_headers_impl(url: str, timeout: int) -> dict[str, Any]:
 
 
 @function_tool(timeout=60, strict_mode=False)
-async def security_headers_probe(ctx: RunContextWrapper, url: str, timeout: int = 15) -> str:
+async def security_headers_probe(
+    ctx: RunContextWrapper, url: str = "", timeout: int = 15, urls: list[str] | None = None
+) -> str:
     """Audit a response's security headers and cookie flags.
 
     Flags missing CSP, HSTS (on HTTPS), clickjacking protection
@@ -92,13 +95,22 @@ async def security_headers_probe(ctx: RunContextWrapper, url: str, timeout: int 
     ``HttpOnly``/``Secure``/``SameSite``. Only test authorized targets.
 
     Returns JSON with ``missing_headers`` (header/severity/why), ``cookie_issues``,
-    and ``possible_hardening_gaps``.
+    and ``possible_hardening_gaps``. In batch mode returns ``results`` — one such
+    object per URL (each with its ``url``) — plus ``count``.
 
     Args:
-        url: The URL whose response headers to audit.
+        url: The URL whose response headers to audit (single-URL mode).
         timeout: Request timeout in seconds (default 15).
+        urls: Optional list of URLs to audit in one call (max 25) — same per-URL
+            audit, one call instead of one per endpoint. Overrides ``url``.
     """
     del ctx
+    if urls:
+        return json.dumps(
+            await asyncio.to_thread(url_batch, _security_headers_impl, urls, timeout),
+            ensure_ascii=False,
+            default=str,
+        )
     return json.dumps(
         await asyncio.to_thread(_security_headers_impl, url, timeout),
         ensure_ascii=False,

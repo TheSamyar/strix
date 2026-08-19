@@ -15,6 +15,7 @@ from typing import Any
 
 from agents import RunContextWrapper, function_tool
 
+from strix.tools.batching import url_batch
 from strix.tools.http_replay.tools import _replay_impl
 
 
@@ -118,7 +119,9 @@ def _header_leak_impl(url: str, timeout: int) -> dict[str, Any]:
 
 
 @function_tool(timeout=60, strict_mode=False)
-async def header_leak(ctx: RunContextWrapper, url: str, timeout: int = 15) -> str:
+async def header_leak(
+    ctx: RunContextWrapper, url: str = "", timeout: int = 15, urls: list[str] | None = None
+) -> str:
     """Scan response headers + cookies/JWT for version, debug, and PII leakage.
 
     Flags exact software-version banners (``Server``/``X-Powered-By`` with a
@@ -128,12 +131,22 @@ async def header_leak(ctx: RunContextWrapper, url: str, timeout: int = 15) -> st
     carried by ``Set-Cookie``/``Authorization``. Only test authorized targets.
 
     Returns JSON with ``findings`` (header/leak/value) and ``possible_header_leak``.
+    In batch mode returns ``results`` — one such object per URL (each with its
+    ``url``) — plus ``count``.
 
     Args:
-        url: The URL whose response headers to inspect.
+        url: The URL whose response headers to inspect (single-URL mode).
         timeout: Request timeout in seconds (default 15).
+        urls: Optional list of URLs to inspect in one call (max 25) — same
+            per-URL scan, one call instead of one per endpoint. Overrides ``url``.
     """
     del ctx
+    if urls:
+        return json.dumps(
+            await asyncio.to_thread(url_batch, _header_leak_impl, urls, timeout),
+            ensure_ascii=False,
+            default=str,
+        )
     return json.dumps(
         await asyncio.to_thread(_header_leak_impl, url, timeout), ensure_ascii=False, default=str
     )
