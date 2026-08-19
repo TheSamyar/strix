@@ -120,6 +120,44 @@ SCANNERS: tuple[Scanner, ...] = (
         ],
         note="Needs Ruby; `gem install wpscan` pulls it into the user gem dir.",
     ),
+    Scanner(
+        "dalfox",
+        "dalfox",
+        [
+            ("brew", ["brew", "install", "dalfox"]),
+            ("go", ["go", "install", "github.com/hahwul/dalfox/v2@latest"]),
+        ],
+        note="Parameter-aware XSS scanner.",
+    ),
+    Scanner(
+        "katana",
+        "katana",
+        [
+            ("brew", ["brew", "install", "katana"]),
+            ("go", ["go", "install", "github.com/projectdiscovery/katana/cmd/katana@latest"]),
+        ],
+        note="ProjectDiscovery crawler.",
+    ),
+    Scanner(
+        "subfinder",
+        "subfinder",
+        [
+            ("brew", ["brew", "install", "subfinder"]),
+            (
+                "go",
+                ["go", "install", "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"],
+            ),
+        ],
+        note="Passive subdomain enumeration.",
+    ),
+    Scanner(
+        "arjun",
+        "arjun",
+        [
+            ("pipx", ["pipx", "install", "arjun"]),
+        ],
+        note="Hidden HTTP-parameter discovery.",
+    ),
 )
 
 _BY_NAME = {s.name: s for s in SCANNERS}

@@ -81,6 +81,20 @@ def test_off_allowlist_rejected_without_subprocess(monkeypatch: pytest.MonkeyPat
             ["-Tuning", "9"],
             ["nikto", "-host", "https://x", "-Tuning", "9"],
         ),
+        (
+            "dalfox",
+            "https://x/?q=1",
+            ["--deep-domxss"],
+            ["dalfox", "url", "https://x/?q=1", "--deep-domxss"],
+        ),
+        ("katana", "https://x", ["-jc"], ["katana", "-u", "https://x", "-jc"]),
+        (
+            "subfinder",
+            "example.com",
+            ["-silent"],
+            ["subfinder", "-d", "example.com", "-silent"],
+        ),
+        ("arjun", "https://x/api", ["-m", "GET"], ["arjun", "-u", "https://x/api", "-m", "GET"]),
     ],
 )
 def test_argv_built_as_list_never_shell(
