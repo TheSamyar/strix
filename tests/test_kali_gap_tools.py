@@ -22,10 +22,19 @@ _IMAGE_PACKAGES = (
     "nikto",
     "hashid",
     "crlfuzz",
+    "metasploit-framework",
+    "zaproxy",
+    "responder",
+    "hydra",
+    "john",
+    "hashcat",
 )
 
 # MCP/CLI run_scanner names. seclists is wordlists, not a scanner binary.
 _SCANNER_TOOLS = (
+    "nuclei",
+    "wapiti",
+    "gospider",
     "sslscan",
     "sstimap",
     "commix",
@@ -38,6 +47,17 @@ _SCANNER_TOOLS = (
 )
 
 _SKILL_PLAYBOOKS = _SCANNER_TOOLS
+
+# Shell-driven tools (interactive / file-output — not run_scanner). They reach
+# the agent only through a tooling skill, so the playbook is what makes them usable.
+_SHELL_TOOL_SKILLS = (
+    "metasploit",
+    "zaproxy",
+    "responder",
+    "hydra",
+    "john",
+    "hashcat",
+)
 
 
 def test_dockerfile_installs_gap_packages() -> None:
@@ -55,4 +75,12 @@ def test_tooling_skills_cover_gap_tools() -> None:
     missing = [name for name in _SKILL_PLAYBOOKS if name not in names]
     assert missing == []
     for name in _SKILL_PLAYBOOKS:
+        assert (SKILL_DIR / f"{name}.md").is_file()
+
+
+def test_shell_driven_tools_have_skills() -> None:
+    names = {skill["name"] for skill in get_available_skills()["tooling"]}
+    missing = [name for name in _SHELL_TOOL_SKILLS if name not in names]
+    assert missing == []
+    for name in _SHELL_TOOL_SKILLS:
         assert (SKILL_DIR / f"{name}.md").is_file()

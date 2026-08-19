@@ -205,6 +205,19 @@ RUN curl -fsSL https://github.com/peass-ng/PEASS-ng/releases/latest/download/lin
 
 RUN apt-get install -y wapiti
 
+# Exploitation + credential heavy-hitters. Driven by the agent through the
+# shell tool (exec_command / write_stdin), not run_scanner — msfconsole and
+# zaproxy are interactive/file-output tools that don't fit the stdout allowlist.
+# NOTE: metasploit-framework (~1GB) + zaproxy (pulls a JRE) add material image
+# size; that is the cost of shipping real exploitation + DAST in-sandbox.
+RUN apt-get install -y --no-install-recommends \
+    metasploit-framework \
+    zaproxy \
+    responder \
+    hydra \
+    john \
+    hashcat
+
 USER pentester
 
 RUN pipx install semgrep && \

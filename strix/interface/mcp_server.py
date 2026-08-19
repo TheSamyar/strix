@@ -82,6 +82,7 @@ from strix.tools.injection_fuzz.tools import injection_fuzz
 from strix.tools.jwt_audit.tools import jwt_audit
 from strix.tools.jwt_confusion.tools import jwt_confusion
 from strix.tools.load_skill.tool import load_skill
+from strix.tools.local_scan.tools import local_security_scan
 from strix.tools.mass_assignment.tools import mass_assignment_probe
 from strix.tools.mcp_audit.tools import mcp_tool_poisoning_audit
 from strix.tools.mfa_bypass.tools import mfa_bypass
@@ -351,6 +352,7 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     ws_probe,
     nuclei_scan,
     run_scanner,
+    local_security_scan,
     recon_chain,
     cve_lookup,
     check_tools,

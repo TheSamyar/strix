@@ -1,6 +1,6 @@
 ---
 name: ci-security-scanning-with-strix
-description: Add security scanning to CI/CD with Strix — GitHub Actions, GitLab CI, or any pipeline — so every pull request gets a diff-scoped AI pentest that blocks vulnerable code before it merges, with results as PR comments and SARIF uploaded to code scanning. Covers both the self-hosted open-source CLI (runs in your runner) and the managed app.strix.ai platform (GitHub/GitLab app or API, no runner infra). Use when the user asks to add security scanning, SAST/DAST, pentesting, vulnerability checks, or automated security review to their CI pipeline, pre-merge gate, or PR workflow.
+description: Add security scanning to CI/CD with Strix — GitHub Actions, GitLab CI, or any pipeline — so every pull request gets a diff-scoped AI pentest that blocks vulnerable code before it merges, with results as SARIF uploaded to code scanning. Uses the self-hosted open-source CLI running in your own runner. Use when the user asks to add security scanning, SAST/DAST, pentesting, vulnerability checks, or automated security review to their CI pipeline, pre-merge gate, or PR workflow.
 license: Apache-2.0
 metadata:
   author: usestrix
@@ -9,16 +9,9 @@ metadata:
 
 # Set up Strix in CI/CD
 
-You can gate PRs two ways — pick based on the environment, or combine them:
-
-- **Managed platform (recommended for most teams)** — connect the GitHub/GitLab/Bitbucket app once and Strix reviews every PR with **no workflow file, no runner, no Docker, and no LLM key**. Results post as PR comments and land in the team dashboard. Best when you want zero CI maintenance, central tracking, or your runners lack Docker. See "Managed platform" below and the **managed-pentesting-with-strix** skill.
-- **Self-hosted OSS CLI in your runner** — run a diff-scoped scan as a pipeline step. Fully in your infra, free (BYO LLM key), no external account. Requires Docker on the runner. Best for air-gapped/self-hosted CI or when you don't want scans leaving your environment.
-
-Both fail the build on validated findings and both emit SARIF 2.1.0, so you can start with one and add the other later.
+Run the self-hosted OSS CLI as a pipeline step: a diff-scoped scan on every PR, fully in your infra, free (BYO LLM key), no external account. Requires Docker on the runner. Fails the build on validated findings and emits SARIF 2.1.0.
 
 ---
-
-# Option A — Self-hosted OSS CLI in the runner
 
 Run a diff-scoped Strix scan on every PR: only changed files are tested, `quick` mode keeps it fast, and exit code `2` fails the build when validated vulnerabilities are found.
 
@@ -108,29 +101,3 @@ strix -n -t ./ --scan-mode quick --scope-mode diff --diff-base "$DIFF_BASE" --ma
 ```
 
 Gate the pipeline on the exit code (see the budget/fail-open caveat above — give the scan enough budget to finish). Schedule `standard` scans nightly and `deep` scans for release candidates.
-
----
-
-# Option B — Managed platform (no runner infra)
-
-No workflow file, no Docker, no LLM key. Two ways to use it:
-
-1. **PR-review app (zero code):** the user installs the Strix GitHub/GitLab/Bitbucket app and enables PR reviews for the repo in the app.strix.ai dashboard. Every PR is then reviewed automatically, with findings posted as PR comments. Nothing to add to the repo. This is the lowest-effort path — recommend it first when the user just wants PR gating.
-
-2. **API-triggered from any pipeline:** if you want to trigger from an existing pipeline (or a system without the SCM app), call the API with a token that has `pr_reviews:write` (or `scans:write`). Store the token as a CI secret; ask the user to create it at **Settings → API Access**. Example GitHub Actions step:
-
-   ```yaml
-   - name: Strix PR review (managed)
-     if: github.event_name == 'pull_request'
-     env:
-       STRIX_API_TOKEN: ${{ secrets.STRIX_API_TOKEN }}
-     run: |
-       curl -sS --fail https://app.strix.ai/api/v1/pr-reviews/start \
-         -H "Authorization: Bearer $STRIX_API_TOKEN" \
-         -H "Content-Type: application/json" \
-         -d "{\"repository_full_name\":\"${{ github.repository }}\",\"pr_number\":${{ github.event.pull_request.number }}}"
-   ```
-
-   To gate the build on results, poll the PR review / scan status and fail on unresolved criticals/highs. Full endpoints (PR reviews, scans, SARIF export, schedules for scheduled deep scans) are in the **managed-pentesting-with-strix** skill.
-
-Recommend Option B for most teams (no maintenance, central dashboard); use Option A when scans must stay entirely within your own infrastructure.

@@ -69,17 +69,6 @@
             ]
           }
         ]
-      },
-      {
-        "tab": "Cloud",
-        "groups": [
-          {
-            "group": "Strix Cloud",
-            "pages": [
-              "cloud/overview"
-            ]
-          }
-        ]
       }
     ],
     "global": {
@@ -100,9 +89,8 @@
   "navbar": {
     "links": [],
     "primary": {
-      "type": "button",
-      "label": "Try Strix Cloud",
-      "href": "https://app.strix.ai"
+      "type": "github",
+      "href": "https://github.com/usestrix/strix"
     }
   },
   "footer": {

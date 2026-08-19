@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 from strix.core.paths import run_record_path
-from strix.interface.viewer import auth
 from strix.interface.viewer.transcript import (
     build_run_state,
     primary_target,
@@ -169,16 +168,6 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
             try:
                 if path == "/api/event":
                     self._handle_event()
-                elif path == "/api/auth/otp/start":
-                    self._handle_otp_start()
-                elif path == "/api/auth/otp/verify":
-                    self._handle_otp_verify()
-                elif path == "/api/auth/forget":
-                    self._handle_forget()
-                elif path == "/api/report/send":
-                    self._handle_report_send()
-                elif path == "/api/feedback":
-                    self._handle_feedback()
                 elif path == "/api/agents/steer":
                     self._handle_steer()
                 else:
@@ -248,9 +237,6 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 # coordinator + event loop (the TUI launcher wires a handler).
                 self._send_json(HTTPStatus.OK, {"can_steer": state.steer_handler is not None})
                 return
-            if path == "/api/auth/status":
-                self._handle_auth_status()
-                return
 
             run_values = query.get("run")
             run_param = run_values[0] if run_values else None
@@ -277,144 +263,6 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 self._send_json(HTTPStatus.OK, build_run_state(run_dir))
             else:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
-
-        def _handle_auth_status(self) -> None:
-            # The cached verified email is only disclosed to a caller holding this
-            # process's session capability, so a cookie-less client on an exposed
-            # --host port cannot read it; everyone else looks unverified.
-            # Verification is reported through is_verified() so an expired record
-            # is advertised as unverified -- otherwise the SPA would suppress
-            # re-verification on PDF email.
-            if not self._has_session():
-                self._send_json(HTTPStatus.OK, {"verified": False, "email": None})
-                return
-            record = auth.read_auth()
-            self._send_json(
-                HTTPStatus.OK,
-                {
-                    "verified": auth.is_verified(),
-                    "email": record.get("email") if record else None,
-                },
-            )
-
-        def _handle_otp_start(self) -> None:
-            if not self._has_session():
-                self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
-                return
-            email = str(self._read_body().get("email") or "").strip()
-            if not email:
-                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_email"})
-                return
-            try:
-                auth.otp_start(email)
-            except auth.RelayError as exc:
-                self._send_relay_error(exc)
-                return
-            self._send_json(HTTPStatus.OK, {"ok": True})
-
-        def _handle_otp_verify(self) -> None:
-            if not self._has_session():
-                self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
-                return
-            body = self._read_body()
-            email = str(body.get("email") or "").strip()
-            code = str(body.get("code") or "").strip()
-            if not email or not code:
-                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_code"})
-                return
-            try:
-                result = auth.otp_verify(email, code)
-            except auth.RelayError as exc:
-                self._send_relay_error(exc)
-                return
-            auth.write_auth(
-                email=result.get("email") or email,
-                token=result["token"],
-                verified_at=result.get("expires_at") or "",
-            )
-            verified_email = result.get("email") or email
-            self._send_json(HTTPStatus.OK, {"verified": True, "email": verified_email})
-
-        def _handle_forget(self) -> None:
-            # Clearing the cached verification is a state change, so it requires
-            # this process's session capability: a cookie-less caller on an
-            # exposed --host port must not be able to log the operator out.
-            if not self._has_session():
-                self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
-                return
-            auth.forget()
-            self._send_json(HTTPStatus.OK, {"ok": True})
-
-        def _handle_report_send(self) -> None:
-            if not self._has_session():
-                self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
-                return
-            record = auth.read_auth()
-            if record is None:
-                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unverified"})
-                return
-            run_param = str(self._read_body().get("run") or "") or None
-            run_dir = resolve_run_dir(state.base_dir, run_param, state.run_dir)
-            if run_dir is None:
-                self._send_json(HTTPStatus.NOT_FOUND, {"error": "unknown run"})
-                return
-
-            summary = read_run_summary(run_dir)
-            # Emailing only makes sense for a completed run; a live scan would
-            # send a partial report. The UI hides the entry point, but fail
-            # closed here too so the endpoint can't be driven mid-scan.
-            if not summary.get("finished", False):
-                self._send_json(HTTPStatus.CONFLICT, {"error": "run_not_finished"})
-                return
-
-            from strix.interface.viewer.report_pdf import build_encrypted_report
-
-            pdf_bytes, password, filename = build_encrypted_report(run_dir)
-            run_name = str(summary.get("run_name") or run_dir.name)
-            target = primary_target(summary) or "unknown target"
-            try:
-                # The password is intentionally NOT passed here; only the
-                # encrypted PDF bytes reach the relay.
-                auth.report_send(record["token"], pdf_bytes, filename, run_name, target)
-            except auth.RelayError as exc:
-                self._send_relay_error(exc)
-                return
-            # The password is returned only to the local (127.0.0.1) browser.
-            self._send_json(
-                HTTPStatus.OK,
-                {"ok": True, "password": password, "filename": filename},
-            )
-
-        # Cap on a feedback message so a runaway client cannot flood the relay.
-        _FEEDBACK_MESSAGE_MAX = 5000
-
-        def _handle_feedback(self) -> None:
-            # Requires this process's session capability, like the other POSTs,
-            # so an exposed --host port can't be used to spam the relay.
-            if not self._has_session():
-                self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
-                return
-            body = self._read_body()
-            email = str(body.get("email") or "").strip()
-            message = str(body.get("message") or "").strip()
-            if not email:
-                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_email"})
-                return
-            if not message:
-                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_message"})
-                return
-            message = message[: self._FEEDBACK_MESSAGE_MAX]
-            try:
-                auth.feedback_submit(email, message)
-            except auth.RelayError as exc:
-                self._send_relay_error(exc)
-                return
-            # Server-authoritative: fire only after a successful relay (respects
-            # the telemetry opt-out; no message/email content is sent).
-            from strix.telemetry import posthog
-
-            posthog.viewer_feedback_submitted()
-            self._send_json(HTTPStatus.OK, {"ok": True})
 
         # Cap on a steering message so a runaway client cannot flood the agent.
         _STEER_MESSAGE_MAX = 4000
@@ -445,21 +293,6 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 self._send_json(HTTPStatus.OK, {"ok": True})
             else:
                 self._send_json(HTTPStatus.OK, {"ok": False, "error": "not_delivered"})
-
-        def _send_relay_error(self, exc: auth.RelayError) -> None:
-            status_by_code = {
-                "rate_limited": HTTPStatus.TOO_MANY_REQUESTS,
-                "invalid_email": HTTPStatus.BAD_REQUEST,
-                "invalid_message": HTTPStatus.BAD_REQUEST,
-                "work_email_required": HTTPStatus.BAD_REQUEST,
-                "invalid_code": HTTPStatus.FORBIDDEN,
-                "reverify": HTTPStatus.UNAUTHORIZED,
-                "forbidden": HTTPStatus.FORBIDDEN,
-                "too_large": HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
-                "unavailable": HTTPStatus.BAD_GATEWAY,
-            }
-            status = status_by_code.get(exc.code, HTTPStatus.BAD_GATEWAY)
-            self._send_json(status, {"error": exc.code})
 
         def _cookies(self) -> dict[str, str]:
             jar: dict[str, str] = {}

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pygments.lexers import BashLexer, PythonLexer
 
-from strix.interface.viewer.report_pdf import _strip_code_fence
 from strix.report.writer import (
     guess_language_name,
     parse_fenced_code,
@@ -41,15 +40,6 @@ def test_parse_fenced_code_fence_without_language() -> None:
     language, code = parse_fenced_code("```\nplain\n```")
     assert language is None
     assert code == "plain"
-
-
-def test_strip_code_fence_removes_fence() -> None:
-    assert _strip_code_fence("```python\nx = 1\n```") == "x = 1"
-
-
-def test_strip_code_fence_passes_through_non_string_and_unfenced() -> None:
-    assert _strip_code_fence(None) is None
-    assert _strip_code_fence("x = 1") == "x = 1"
 
 
 def test_resolve_lexer_honors_explicit_language() -> None:

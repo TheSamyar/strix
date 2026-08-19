@@ -135,15 +135,6 @@ class IntegrationSettings(BaseSettings):
     )
 
 
-class ViewerSettings(BaseSettings):
-    model_config = _BASE_CONFIG
-
-    # Base URL of the Strix relay the local viewer proxies to for email
-    # verification and encrypted report delivery. The browser never talks to
-    # the relay directly; the local server is the only caller.
-    app_url: str = Field(default="https://app.strix.ai", alias="STRIX_APP_URL")
-
-
 class Settings(BaseSettings):
     model_config = _BASE_CONFIG
 
@@ -153,4 +144,3 @@ class Settings(BaseSettings):
     context: ContextSettings = Field(default_factory=ContextSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     integrations: IntegrationSettings = Field(default_factory=IntegrationSettings)
-    viewer: ViewerSettings = Field(default_factory=ViewerSettings)
