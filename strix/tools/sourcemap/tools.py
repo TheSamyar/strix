@@ -16,6 +16,7 @@ from urllib.parse import urljoin
 
 from agents import RunContextWrapper, function_tool
 
+from strix.tools.batching import url_batch
 from strix.tools.frontend_secret_scan.tools import _scan_text
 from strix.tools.http_replay.tools import _replay_impl
 
@@ -110,7 +111,9 @@ def _sourcemap_impl(url: str, timeout: int) -> dict[str, Any]:
 
 
 @function_tool(timeout=180, strict_mode=False)
-async def sourcemap_recover(ctx: RunContextWrapper, url: str, timeout: int = 20) -> str:
+async def sourcemap_recover(
+    ctx: RunContextWrapper, url: str = "", timeout: int = 20, urls: list[str] | None = None
+) -> str:
     """Recover original source from exposed .map files and mine it.
 
     Fetches the page's JS bundles, follows their ``sourceMappingURL`` /
@@ -120,13 +123,22 @@ async def sourcemap_recover(ctx: RunContextWrapper, url: str, timeout: int = 20)
     ``.map`` URL directly to just mine it. Only test authorized targets.
 
     Returns JSON with ``recovered`` (map/source-file count), ``secrets``,
-    ``internal_routes``, and ``possible_source_exposure``.
+    ``internal_routes``, and ``possible_source_exposure``. In batch mode returns
+    ``results`` — one such object per URL (each with its ``url``) — plus ``count``.
 
     Args:
         url: A page URL (bundles are followed) or a ``.map`` URL directly.
         timeout: Per-request timeout in seconds (default 20).
+        urls: Optional list of pages or ``.map`` URLs to mine in one call
+            (max 25). Overrides ``url``.
     """
     del ctx
+    if urls:
+        return json.dumps(
+            await asyncio.to_thread(url_batch, _sourcemap_impl, urls, timeout),
+            ensure_ascii=False,
+            default=str,
+        )
     return json.dumps(
         await asyncio.to_thread(_sourcemap_impl, url, timeout), ensure_ascii=False, default=str
     )

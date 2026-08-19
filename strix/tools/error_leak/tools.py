@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from agents import RunContextWrapper, function_tool
 
+from strix.tools.batching import url_batch
 from strix.tools.http_replay.tools import _replay_impl
 
 
@@ -113,14 +114,32 @@ def _error_leak_impl(
     }
 
 
+def _error_leak_run(
+    method: str,
+    url: str,
+    param: str,
+    headers: dict[str, str] | None,
+    timeout: int,
+    urls: list[str] | None = None,
+) -> dict[str, Any]:
+    if urls:
+
+        def _one(u: str, t: int) -> dict[str, Any]:
+            return _error_leak_impl(method, u, param, headers, t)
+
+        return url_batch(_one, urls, timeout)
+    return _error_leak_impl(method, url, param, headers, timeout)
+
+
 @function_tool(timeout=120, strict_mode=False)
 async def error_leak_probe(
     ctx: RunContextWrapper,
-    url: str,
+    url: str = "",
     param: str = "id",
     method: str = "GET",
     headers: dict[str, str] | None = None,
     timeout: int = 15,
+    urls: list[str] | None = None,
 ) -> str:
     """Trigger error conditions and flag what the app leaks in the response.
 
@@ -131,18 +150,21 @@ async def error_leak_probe(
     targets.
 
     Returns JSON with ``possible_error_leak`` and per-malformation ``leaked``
-    categories + a sample.
+    categories + a sample. In batch mode returns ``results`` — one such object
+    per URL (each with its ``url``) — plus ``count``.
 
     Args:
-        url: The endpoint to stress.
+        url: The endpoint to stress (single-URL mode).
         param: The parameter/field to malform (default ``id``).
         method: HTTP method (default GET).
         headers: Request headers (e.g. a session).
         timeout: Per-request timeout in seconds (default 15).
+        urls: Optional list of endpoints to stress in one call (max 25) — same
+            per-URL scan, one call instead of one per endpoint. Overrides ``url``.
     """
     del ctx
     return json.dumps(
-        await asyncio.to_thread(_error_leak_impl, method, url, param, headers, timeout),
+        await asyncio.to_thread(_error_leak_run, method, url, param, headers, timeout, urls),
         ensure_ascii=False,
         default=str,
     )

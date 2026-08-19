@@ -16,6 +16,7 @@ from urllib.parse import urljoin
 
 from agents import RunContextWrapper, function_tool
 
+from strix.tools.batching import url_batch
 from strix.tools.http_replay.tools import _replay_impl
 
 
@@ -103,9 +104,10 @@ def _storage_probe_impl(
 @function_tool(timeout=120, strict_mode=False)
 async def storage_probe(
     ctx: RunContextWrapper,
-    base_url: str,
+    base_url: str = "",
     extra_paths: list[str] | None = None,
     timeout: int = 12,
+    urls: list[str] | None = None,
 ) -> str:
     """Probe for exposed backup/dump files and repo/config leaks.
 
@@ -117,14 +119,28 @@ async def storage_probe(
     Only test authorized targets.
 
     Returns JSON with ``possible_exposure``, ``exposed`` (path/status/sample),
-    and ``spa_catch_all``.
+    and ``spa_catch_all``. In batch mode returns ``results`` — one such object
+    per site root (each with its ``url``) — plus ``count``.
 
     Args:
         base_url: Site root (``https://app.example.com``).
         extra_paths: Extra paths/URLs to test (e.g. a Supabase Storage list URL).
         timeout: Per-request timeout in seconds (default 12).
+        urls: Optional list of site roots to probe in one call (max 25) — same
+            per-root scan, one call instead of one per host. Overrides
+            ``base_url``.
     """
     del ctx
+    if urls:
+
+        def _one(u: str, t: int) -> dict[str, Any]:
+            return _storage_probe_impl(u, extra_paths, t)
+
+        return json.dumps(
+            await asyncio.to_thread(url_batch, _one, urls, timeout),
+            ensure_ascii=False,
+            default=str,
+        )
     return json.dumps(
         await asyncio.to_thread(_storage_probe_impl, base_url, extra_paths, timeout),
         ensure_ascii=False,

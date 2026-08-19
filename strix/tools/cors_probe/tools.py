@@ -13,6 +13,7 @@ from typing import Any
 
 from agents import RunContextWrapper, function_tool
 
+from strix.tools.batching import url_batch
 from strix.tools.http_replay.tools import _replay_impl
 
 
@@ -88,13 +89,30 @@ def _cors_probe_impl(
     }
 
 
+def _cors_probe_run(
+    url: str,
+    method: str,
+    origins: list[str] | None,
+    timeout: int,
+    urls: list[str] | None = None,
+) -> dict[str, Any]:
+    if urls:
+
+        def _one(u: str, t: int) -> dict[str, Any]:
+            return _cors_probe_impl(u, method, origins, t)
+
+        return url_batch(_one, urls, timeout)
+    return _cors_probe_impl(url, method, origins, timeout)
+
+
 @function_tool(timeout=90, strict_mode=False)
 async def cors_probe(
     ctx: RunContextWrapper,
-    url: str,
+    url: str = "",
     method: str = "GET",
     origins: list[str] | None = None,
     timeout: int = 15,
+    urls: list[str] | None = None,
 ) -> str:
     """Test a URL for permissive CORS (reflected/`*`/`null` Origin + credentials).
 
@@ -104,17 +122,21 @@ async def cors_probe(
     credentialed read). Only test authorized targets.
 
     Returns JSON with per-origin ``acao`` / ``allow_credentials`` / ``severity``
-    and an overall ``possible_cors_issue`` + ``worst_severity``.
+    and an overall ``possible_cors_issue`` + ``worst_severity``. In batch mode
+    returns ``results`` — one such object per URL (each with its ``url``) — plus
+    ``count``.
 
     Args:
         url: Full URL to test (ideally a credentialed API endpoint).
         method: HTTP method (default GET).
         origins: Origins to test (default an evil host and ``null``).
         timeout: Per-request timeout in seconds (default 15).
+        urls: Optional list of URLs to test in one call (max 25) — same per-URL
+            probe, one call instead of one per endpoint. Overrides ``url``.
     """
     del ctx
     return json.dumps(
-        await asyncio.to_thread(_cors_probe_impl, url, method, origins, timeout),
+        await asyncio.to_thread(_cors_probe_run, url, method, origins, timeout, urls),
         ensure_ascii=False,
         default=str,
     )

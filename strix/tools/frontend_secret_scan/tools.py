@@ -18,6 +18,7 @@ from urllib.parse import urljoin
 
 from agents import RunContextWrapper, function_tool
 
+from strix.tools.batching import url_batch
 from strix.tools.http_replay.tools import _replay_impl
 
 
@@ -151,9 +152,10 @@ def _frontend_secret_scan_impl(url: str, validate: bool, timeout: int) -> dict[s
 @function_tool(timeout=180, strict_mode=False)
 async def frontend_secret_scan(
     ctx: RunContextWrapper,
-    url: str,
+    url: str = "",
     validate: bool = False,
     timeout: int = 20,
+    urls: list[str] | None = None,
 ) -> str:
     """Scan a page and its served JS bundles for leaked secrets.
 
@@ -165,14 +167,28 @@ async def frontend_secret_scan(
 
     Returns JSON with ``secret_count``, ``possible_secret_leak``, and per-finding
     ``type`` / ``value`` / ``severity`` / ``source`` (+ ``live`` when validated).
+    In batch mode returns ``results`` — one such object per URL (each with its
+    ``url``) — plus ``count``.
 
     Args:
         url: Page URL to scan (the app's front end).
         validate: When True, live-validate Stripe/OpenAI keys (sends the key to
             the provider's own API). Default False.
         timeout: Per-request timeout in seconds (default 20).
+        urls: Optional list of pages to scan in one call (max 25) — same per-URL
+            scan, one call instead of one per page. Overrides ``url``.
     """
     del ctx
+    if urls:
+
+        def _one(u: str, t: int) -> dict[str, Any]:
+            return _frontend_secret_scan_impl(u, validate, t)
+
+        return json.dumps(
+            await asyncio.to_thread(url_batch, _one, urls, timeout),
+            ensure_ascii=False,
+            default=str,
+        )
     return json.dumps(
         await asyncio.to_thread(_frontend_secret_scan_impl, url, validate, timeout),
         ensure_ascii=False,

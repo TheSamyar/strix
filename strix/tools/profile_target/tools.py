@@ -148,6 +148,73 @@ def _extract_endpoints(body: str, final_url: str) -> list[str]:
     return sorted(found)[:_MAX_ENDPOINTS]
 
 
+# MCP tool names that actually exist in this tree. Skip anything not listed.
+_EXISTING_PROBES = frozenset(
+    {
+        "graphql_introspection",
+        "graphql_abuse",
+        "jwt_audit",
+        "jwt_confusion",
+        "oauth_probe",
+        "backend_rules_probe",
+        "storage_probe",
+        "injection_fuzz",
+        "param_discover",
+        "security_headers_probe",
+        "header_leak",
+        "frontend_secret_scan",
+        "cors_probe",
+    }
+)
+_ALWAYS_PROBES = (
+    "security_headers_probe",
+    "header_leak",
+    "frontend_secret_scan",
+    "cors_probe",
+)
+
+
+def _blob(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.lower()
+    if isinstance(value, dict):
+        return " ".join(f"{k} {v}" for k, v in value.items()).lower()
+    if isinstance(value, (list, tuple, set)):
+        return " ".join(str(v) for v in value).lower()
+    return str(value).lower()
+
+
+def _recommended_probes(profile: dict[str, Any]) -> list[str]:
+    """Map a fingerprint dict to de-duplicated MCP tool names. No HTTP."""
+    out: list[str] = []
+
+    def add(*names: str) -> None:
+        for name in names:
+            if name in _EXISTING_PROBES and name not in out:
+                out.append(name)
+
+    add(*_ALWAYS_PROBES)
+    api = _blob(profile.get("api"))
+    auth = _blob(profile.get("auth"))
+    baas = _blob(profile.get("baas"))
+    if "graphql" in api:
+        add("graphql_introspection", "graphql_abuse")
+    if "jwt" in auth:
+        add("jwt_audit", "jwt_confusion")
+    if "oauth" in auth:
+        add("oauth_probe")
+    if "supabase" in baas:
+        add("backend_rules_probe", "jwt_audit")
+    if "firebase" in baas:
+        add("storage_probe")
+    # cms/wordpress: no dedicated MCP probe exists in this tree
+    if profile.get("endpoints"):
+        add("injection_fuzz", "param_discover")
+    return out
+
+
 def _profile_target_impl(url: str, timeout: int) -> dict[str, Any]:
     if not url or not url.strip():
         return {"success": False, "error": "url cannot be empty"}
@@ -179,7 +246,8 @@ def _profile_target_impl(url: str, timeout: int) -> dict[str, Any]:
                 profile[category].append(label)
 
     supabase_url, supabase_anon = _extract_supabase(body)
-    return {
+    endpoints = _extract_endpoints(body, final_url)
+    result: dict[str, Any] = {
         "success": True,
         "url": url,
         "final_url": final_url,
@@ -187,9 +255,11 @@ def _profile_target_impl(url: str, timeout: int) -> dict[str, Any]:
         **profile,
         "supabase_url": supabase_url,
         "supabase_anon_key": supabase_anon,
-        "endpoints": _extract_endpoints(body, final_url),
+        "endpoints": endpoints,
         "evidence": evidence,
     }
+    result["recommended_probes"] = _recommended_probes(result)
+    return result
 
 
 @function_tool(timeout=120, strict_mode=False)
@@ -208,7 +278,8 @@ async def profile_target(ctx: RunContextWrapper, url: str, timeout: int = 20) ->
     surface straight to ``plan_tests``/``injection_fuzz`` without a separate
     discovery pass. They are candidates, not confirmed live — verify before use.
 
-    Returns JSON with each category, ``endpoints``, an ``evidence`` map, and the
+    Returns JSON with each category, ``endpoints``, ``recommended_probes`` (MCP
+    tool names implied by the fingerprint), an ``evidence`` map, and the
     Supabase creds.
 
     Args:
