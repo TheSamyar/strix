@@ -63,6 +63,7 @@ from strix.tools.dep_confusion.tools import check_dependency_confusion
 from strix.tools.desync.tools import cache_deception_probe, request_smuggling_probe
 from strix.tools.diff_response.tools import diff_response
 from strix.tools.discovery.tools import content_discover, param_discover
+from strix.tools.dos_probe.tools import dos_probe
 from strix.tools.endpoint_risk.tools import endpoint_risk_rank
 from strix.tools.error_leak.tools import error_leak_probe
 from strix.tools.frontend_secret_scan.tools import frontend_secret_scan
@@ -89,6 +90,7 @@ from strix.tools.notes.tools import (
 from strix.tools.npm_audit.tools import npm_audit
 from strix.tools.nuclei_scan.tools import nuclei_scan
 from strix.tools.oast.tools import oast_get_domain, oast_poll
+from strix.tools.oauth_probe.tools import oauth_probe
 from strix.tools.openapi_import.tools import import_openapi
 from strix.tools.osv_scan.tools import osv_scan
 from strix.tools.plan_tests.tools import plan_tests
@@ -293,6 +295,8 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     race_probe,
     session_invalidation_probe,
     user_enumeration_probe,
+    oauth_probe,
+    dos_probe,
     mass_assignment_probe,
     redirect_probe,
     security_headers_probe,

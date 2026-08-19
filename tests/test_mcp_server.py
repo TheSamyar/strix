@@ -104,6 +104,8 @@ def test_tools_list_includes_skill_and_report_tools() -> None:
         "jwt_confusion",
         "session_fixation_probe",
         "reset_token_probe",
+        "oauth_probe",
+        "dos_probe",
     } <= names
     assert "create_agent" not in names
     assert "finish_scan" not in names
