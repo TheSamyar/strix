@@ -98,3 +98,43 @@ def test_gaps_thorough_when_clear(run: ReportState) -> None:
     out = _coverage_gaps_impl("empty-agent")
     assert _get_agent_todos("empty-agent") == {}
     assert out["thoroughness"] == "looks_thorough"
+
+
+def _reset_surface() -> None:
+    from strix.tools.attack_surface import tools as asf
+
+    asf._store["endpoints"].clear()
+    asf._store["roles"].clear()
+    asf._store["matrix"].clear()
+
+
+def test_surface_gaps_flag_untested_deep_classes() -> None:
+    from strix.tools.attack_surface import tools as asf
+    from strix.tools.coverage_gaps.tools import _surface_gaps
+
+    _reset_surface()
+    asf._record_endpoint_impl("/graphql", "POST", params=["query"], auth_required=True)
+    asf._record_endpoint_impl(
+        "/api/avatar/upload", "POST", params=["file"], auth_required=True, notes="multipart"
+    )
+    asf._record_role_impl("admin")
+    asf._record_role_impl("user")
+
+    gaps = _surface_gaps(set())  # nothing deep ran
+    joined = " ".join(gaps).lower()
+    assert "authorization" in joined  # multi-identity → IDOR/BOLA
+    assert "graphql" in joined
+    assert "upload" in joined
+    assert "injection" in joined
+    assert "stored" in joined
+
+    # once the deep tools ran, the surface gaps clear (matrix bookkeeping optional)
+    ran = {"authz_probe", "graphql_abuse", "upload_probe", "injection_fuzz", "stored_probe"}
+    assert _surface_gaps(ran) == []
+    _reset_surface()
+
+
+def test_surface_gaps_never_break_without_audit_log() -> None:
+    from strix.tools.coverage_gaps.tools import _surface_gaps
+
+    assert _surface_gaps(None) == []
