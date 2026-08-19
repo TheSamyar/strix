@@ -309,3 +309,36 @@ def test_slow_tool_does_not_block_other_methods(monkeypatch: pytest.MonkeyPatch)
     assert ping_dt < 0.1, "ping was blocked by the slow tool call"
     progress = [w for w in writes if w.get("method") == "notifications/progress"]
     assert len(progress) == 2
+
+
+@pytest.mark.usefixtures("mcp_run")
+def test_audit_log_records_tool_call(tmp_path: Path) -> None:
+    _call("tools/call", {"name": "list_skills"})
+    audit = tmp_path / "strix_runs" / "mcp-test" / ".state" / "mcp_audit.jsonl"
+    assert audit.is_file()
+    rows = [json.loads(line) for line in audit.read_text().splitlines()]
+    assert any(r["tool"] == "list_skills" for r in rows)
+    row = rows[-1]
+    assert set(row) >= {"ts", "tool", "arg_keys", "elapsed_ms", "is_error", "result_chars"}
+
+
+@pytest.mark.usefixtures("mcp_run")
+def test_audit_log_never_logs_credential_values(tmp_path: Path) -> None:
+    _call(
+        "tools/call",
+        {"name": "store_credential", "arguments": {"label": "owner", "value": "s3cr3t-token"}},
+    )
+    audit = tmp_path / "strix_runs" / "mcp-test" / ".state" / "mcp_audit.jsonl"
+    text = audit.read_text()
+    assert "s3cr3t-token" not in text  # values must never reach the audit log
+    rows = [json.loads(line) for line in text.splitlines()]
+    cred_row = next(r for r in rows if r["tool"] == "store_credential")
+    assert cred_row["arg_keys"] == ["label", "value"]  # keys only
+
+
+@pytest.mark.usefixtures("mcp_run")
+def test_audit_resource_readable() -> None:
+    _call("tools/call", {"name": "list_skills"})
+    result = _call("resources/read", {"uri": "strix://audit"})["result"]
+    assert result["contents"][0]["mimeType"] == "application/jsonl"
+    assert "list_skills" in result["contents"][0]["text"]

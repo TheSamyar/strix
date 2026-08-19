@@ -13,6 +13,8 @@ import json
 import logging
 import sys
 import threading
+import time
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from agents.tool_context import ToolContext
@@ -400,7 +402,42 @@ def _tool_result(text: str, *, is_error: bool = False) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": text}], "isError": is_error}
 
 
-async def _invoke_host_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+AUDIT_LOG_NAME = "mcp_audit.jsonl"
+_audit_lock = threading.Lock()
+
+
+def _result_chars(result: dict[str, Any]) -> int:
+    content = result.get("content")
+    if isinstance(content, list) and content and isinstance(content[0], dict):
+        return len(str(content[0].get("text", "")))
+    return 0
+
+
+def _audit_log(
+    tool: str, arg_keys: list[str], elapsed_ms: float, *, is_error: bool, result_chars: int
+) -> None:
+    """Append one secret-safe record per tool call. Logs argument KEYS only —
+    never values — so credential secrets never reach disk."""
+    state = get_global_report_state()
+    if state is None:
+        return
+    record = {
+        "ts": datetime.now(tz=UTC).isoformat(),
+        "tool": tool,
+        "arg_keys": arg_keys,
+        "elapsed_ms": round(elapsed_ms, 1),
+        "is_error": is_error,
+        "result_chars": result_chars,
+    }
+    try:
+        path = runtime_state_dir(state.get_run_dir()) / AUDIT_LOG_NAME
+        with _audit_lock, path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError:
+        logger.debug("MCP audit write failed", exc_info=True)
+
+
+async def _run_host_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     if name == "list_skills":
         return _tool_result(json.dumps(get_available_skills(), indent=2))
     tool = _tool_by_name().get(name)
@@ -416,6 +453,19 @@ async def _invoke_host_tool(name: str, arguments: dict[str, Any]) -> dict[str, A
     raw = await tool.on_invoke_tool(ctx, raw_args)
     text = raw if isinstance(raw, str) else json.dumps(raw, default=str)
     return _tool_result(text)
+
+
+async def _invoke_host_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    started = time.monotonic()
+    result = await _run_host_tool(name, arguments)
+    _audit_log(
+        name,
+        sorted(arguments),
+        (time.monotonic() - started) * 1000,
+        is_error=bool(result.get("isError")),
+        result_chars=_result_chars(result),
+    )
+    return result
 
 
 def _dict_field(container: Mapping[str, Any], key: str) -> dict[str, Any]:
@@ -440,6 +490,7 @@ def _call_tool_response(msg: Mapping[str, Any]) -> dict[str, Any]:
 
 SKILLS_URI = "strix://skills"
 REPORTS_URI = "strix://reports"
+AUDIT_URI = "strix://audit"
 _SKILL_URI_PREFIX = "strix://skill/"
 
 
@@ -460,6 +511,12 @@ def mcp_resource_descriptors() -> list[dict[str, Any]]:
             "name": "Strix findings",
             "description": "Validated vulnerability reports filed this run (JSON).",
             "mimeType": "application/json",
+        },
+        {
+            "uri": AUDIT_URI,
+            "name": "Strix MCP audit trail",
+            "description": "Every MCP tool call this run: tool, arg keys, timing, error (JSONL).",
+            "mimeType": "application/jsonl",
         },
     ]
     for category, packs in get_available_skills().items():
@@ -493,6 +550,8 @@ def _resource_contents(uri: str) -> dict[str, Any] | None:
             "mimeType": "application/json",
             "text": json.dumps(reports, indent=2, default=str),
         }
+    if uri == AUDIT_URI:
+        return {"uri": uri, "mimeType": "application/jsonl", "text": _read_audit_log()}
     if uri.startswith(_SKILL_URI_PREFIX):
         name = uri[len(_SKILL_URI_PREFIX) :]
         body = load_skills([name]).get(name)
@@ -500,6 +559,19 @@ def _resource_contents(uri: str) -> dict[str, Any] | None:
             return None
         return {"uri": uri, "mimeType": "text/markdown", "text": f"# Skill: {name}\n\n{body}"}
     return None
+
+
+def _read_audit_log(max_lines: int = 500) -> str:
+    """Return the last ``max_lines`` audit records (JSONL), newest run dir."""
+    state = get_global_report_state()
+    if state is None:
+        return ""
+    path = runtime_state_dir(state.get_run_dir()) / AUDIT_LOG_NAME
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    return "\n".join(lines[-max_lines:])
 
 
 def _read_resource_response(msg: Mapping[str, Any]) -> dict[str, Any]:
