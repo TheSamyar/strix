@@ -61,6 +61,7 @@ from strix.tools.gitleaks_scan.tools import gitleaks_scan
 from strix.tools.graphql_probe.tools import graphql_introspection
 from strix.tools.harvest.tools import discover_assets, walk_unauth
 from strix.tools.http_replay.tools import http_replay
+from strix.tools.injection_fuzz.tools import injection_fuzz
 from strix.tools.jwt_audit.tools import jwt_audit
 from strix.tools.load_skill.tool import load_skill
 from strix.tools.mcp_audit.tools import mcp_tool_poisoning_audit
@@ -79,6 +80,7 @@ from strix.tools.openapi_import.tools import import_openapi
 from strix.tools.osv_scan.tools import osv_scan
 from strix.tools.plan_tests.tools import plan_tests
 from strix.tools.profile_target.tools import profile_target
+from strix.tools.prompt_injection.tools import prompt_injection_probe
 from strix.tools.proxy.tools import (
     list_requests,
     list_sitemap,
@@ -242,6 +244,8 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     import_openapi,
     http_replay,
     authz_probe,
+    injection_fuzz,
+    prompt_injection_probe,
     cors_probe,
     rate_limit_probe,
     graphql_introspection,
