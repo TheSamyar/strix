@@ -31,6 +31,7 @@ from strix.tools.attack_surface.tools import (
     record_endpoint,
     record_role,
 )
+from strix.tools.auth_probe.tools import session_invalidation_probe
 from strix.tools.authz_probe.tools import authz_probe
 from strix.tools.backend_rules_probe.tools import backend_rules_probe
 from strix.tools.chains.tools import (
@@ -86,6 +87,7 @@ from strix.tools.proxy.tools import (
     view_request,
     view_sitemap_entry,
 )
+from strix.tools.race_probe.tools import race_probe
 from strix.tools.rate_limit_probe.tools import rate_limit_probe
 from strix.tools.recon.tools import recon_chain
 from strix.tools.reporting.tool import (
@@ -244,6 +246,8 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     rate_limit_probe,
     graphql_introspection,
     jwt_audit,
+    race_probe,
+    session_invalidation_probe,
     backend_rules_probe,
     frontend_secret_scan,
     oast_get_domain,
