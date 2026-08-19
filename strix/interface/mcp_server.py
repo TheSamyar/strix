@@ -45,6 +45,7 @@ from strix.tools.chains.tools import (
 )
 from strix.tools.cors_probe.tools import cors_probe
 from strix.tools.coverage.tools import coverage_report, scope_coverage
+from strix.tools.coverage_gaps.tools import coverage_gaps
 from strix.tools.credentials.tools import (
     delete_credential,
     get_credential,
@@ -61,6 +62,7 @@ from strix.tools.endpoint_risk.tools import endpoint_risk_rank
 from strix.tools.frontend_secret_scan.tools import frontend_secret_scan
 from strix.tools.git_recon.tools import git_recon
 from strix.tools.gitleaks_scan.tools import gitleaks_scan
+from strix.tools.graphql_abuse.tools import graphql_abuse
 from strix.tools.graphql_probe.tools import graphql_introspection
 from strix.tools.harvest.tools import discover_assets, walk_unauth
 from strix.tools.http_replay.tools import http_replay
@@ -195,9 +197,10 @@ do not redact. Use create_dependency_report for \
 known-CVE dependencies. Track scope, hypotheses, and progress with the notes \
 and todo tools.
 
-6. DON'T DECLARE DONE — call coverage_report again. If walk.incomplete or the \
-coverage checklist still has untested classes, keep going. When finished, call \
-dedupe_reports to merge duplicate findings; after a fix cycle, call \
+6. DON'T DECLARE DONE — call coverage_report and coverage_gaps. If \
+coverage_gaps.thoroughness is not "looks_thorough" (pending classes, or key \
+probes never run), keep going. When finished, call dedupe_reports to merge \
+duplicate findings, suggest_chains to escalate them, and after a fix cycle \
 retest_findings to prove which findings are now closed."""
 
 SPECIALIST_MCP_INSTRUCTIONS = """\
@@ -256,6 +259,8 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     cors_probe,
     rate_limit_probe,
     graphql_introspection,
+    graphql_abuse,
+    coverage_gaps,
     jwt_audit,
     race_probe,
     session_invalidation_probe,
