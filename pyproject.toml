@@ -235,6 +235,7 @@ ignore = [
 # Monkeypatch doubles ignore callee-signature args; fixture JWT secret; pytest
 # is referenced only in annotations here.
 "tests/test_misconfig_probes.py" = ["ARG001", "ARG005", "S105", "TC002"]
+"tests/test_baas_and_secrets.py" = ["ARG001", "ARG005", "S105", "TC002"]
 "tests/test_codex_auth.py" = ["S105", "S106", "SLF001"]
 # Hatchling loads the build hook by path, not as an importable package.
 "scripts/tui_sidecar_hook.py" = ["INP001"]

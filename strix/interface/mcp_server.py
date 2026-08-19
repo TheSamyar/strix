@@ -32,6 +32,7 @@ from strix.tools.attack_surface.tools import (
     record_role,
 )
 from strix.tools.authz_probe.tools import authz_probe
+from strix.tools.backend_rules_probe.tools import backend_rules_probe
 from strix.tools.chains.tools import (
     add_chain_step,
     chain_finding,
@@ -52,6 +53,7 @@ from strix.tools.cve_lookup.tools import cve_lookup
 from strix.tools.dedupe.tools import dedupe_reports
 from strix.tools.dep_confusion.tools import check_dependency_confusion
 from strix.tools.diff_response.tools import diff_response
+from strix.tools.frontend_secret_scan.tools import frontend_secret_scan
 from strix.tools.git_recon.tools import git_recon
 from strix.tools.gitleaks_scan.tools import gitleaks_scan
 from strix.tools.graphql_probe.tools import graphql_introspection
@@ -226,6 +228,8 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     rate_limit_probe,
     graphql_introspection,
     jwt_audit,
+    backend_rules_probe,
+    frontend_secret_scan,
     validate_finding,
     retest_findings,
     diff_response,
