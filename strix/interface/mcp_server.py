@@ -74,6 +74,7 @@ from strix.tools.harvest.tools import discover_assets, walk_unauth
 from strix.tools.http_replay.tools import http_replay
 from strix.tools.injection_fuzz.tools import injection_fuzz
 from strix.tools.jwt_audit.tools import jwt_audit
+from strix.tools.jwt_confusion.tools import jwt_confusion
 from strix.tools.load_skill.tool import load_skill
 from strix.tools.mass_assignment.tools import mass_assignment_probe
 from strix.tools.mcp_audit.tools import mcp_tool_poisoning_audit
@@ -121,6 +122,7 @@ from strix.tools.scanner_deps.tools import (
     render_install_report,
 )
 from strix.tools.security_headers.tools import security_headers_probe
+from strix.tools.session_fixation.tools import reset_token_probe, session_fixation_probe
 from strix.tools.signed_url.tools import signed_url_probe
 from strix.tools.sourcemap.tools import sourcemap_recover
 from strix.tools.ssr_leak.tools import ssr_leak_scan
@@ -285,6 +287,9 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     graphql_abuse,
     coverage_gaps,
     jwt_audit,
+    jwt_confusion,
+    session_fixation_probe,
+    reset_token_probe,
     race_probe,
     session_invalidation_probe,
     user_enumeration_probe,
