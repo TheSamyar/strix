@@ -35,6 +35,7 @@ from strix.tools.auth_crawl.tools import auth_crawl
 from strix.tools.auth_probe.tools import session_invalidation_probe
 from strix.tools.authz_probe.tools import authz_probe
 from strix.tools.backend_rules_probe.tools import backend_rules_probe
+from strix.tools.cache_privacy.tools import cache_privacy_probe
 from strix.tools.chain_suggest.tools import suggest_chains
 from strix.tools.chains.tools import (
     add_chain_step,
@@ -54,6 +55,7 @@ from strix.tools.credentials.tools import (
     store_credential,
 )
 from strix.tools.cve_lookup.tools import cve_lookup
+from strix.tools.data_exposure.tools import data_exposure_probe
 from strix.tools.dedupe.tools import dedupe_reports
 from strix.tools.dep_confusion.tools import check_dependency_confusion
 from strix.tools.desync.tools import cache_deception_probe, request_smuggling_probe
@@ -112,6 +114,8 @@ from strix.tools.scanner_deps.tools import (
     missing_tools,
     render_install_report,
 )
+from strix.tools.ssr_leak.tools import ssr_leak_scan
+from strix.tools.storage_probe.tools import storage_probe
 from strix.tools.todo.tools import (
     create_todo,
     delete_todo,
@@ -170,7 +174,10 @@ exports, logs, RAG/vector stores, prompts, job IDs, signed URLs, cache keys, \
 and integration payloads. Use at least two identities/tenants when available; \
 store each as a credential and run authz_probe to replay list/view/search/\
 export/download/status endpoints across boundaries and diff status, lengths, \
-and body digests in one call. load_skill data_leakage.
+and body digests in one call. Also: ssr_leak_scan (data embedded in the SSR \
+page), data_exposure_probe (API returns more fields than the UI), storage_probe \
+(exposed .git/.env/backups), and cache_privacy_probe (private data cached / \
+tokens in URLs). load_skill data_leakage.
 
 3. SYSTEMATIC PER-SURFACE x PER-CLASS TESTING — for each endpoint/parameter, \
 test every relevant vulnerability class. Run list_skills to see the packs, and \
@@ -266,6 +273,10 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     session_invalidation_probe,
     backend_rules_probe,
     frontend_secret_scan,
+    ssr_leak_scan,
+    data_exposure_probe,
+    storage_probe,
+    cache_privacy_probe,
     oast_get_domain,
     oast_poll,
     mcp_tool_poisoning_audit,

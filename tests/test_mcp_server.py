@@ -84,6 +84,12 @@ def test_tools_list_includes_skill_and_report_tools() -> None:
         "request_smuggling_probe",
     } <= names
     assert {"graphql_abuse", "coverage_gaps"} <= names
+    assert {
+        "ssr_leak_scan",
+        "data_exposure_probe",
+        "storage_probe",
+        "cache_privacy_probe",
+    } <= names
     assert "create_agent" not in names
     assert "finish_scan" not in names
 
