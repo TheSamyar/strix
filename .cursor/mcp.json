@@ -1,11 +1,11 @@
 {
   "mcpServers": {
     "strix": {
-      "command": "/Users/samyar/.local/bin/uv",
+      "command": "/opt/homebrew/bin/uv",
       "args": [
         "run",
         "--directory",
-        "/Users/samyar/Github Local/strix",
+        "/Users/samyardastmalchi/Github Local/strix",
         "strix",
         "mcp"
       ]
