@@ -108,6 +108,9 @@ def test_tools_list_includes_skill_and_report_tools() -> None:
         "dos_probe",
         "csrf_probe",
         "default_creds",
+        "subdomain_takeover",
+        "graphql_field_leak",
+        "graphql_dos",
     } <= names
     assert "create_agent" not in names
     assert "finish_scan" not in names

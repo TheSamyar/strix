@@ -72,6 +72,7 @@ from strix.tools.frontend_secret_scan.tools import frontend_secret_scan
 from strix.tools.git_recon.tools import git_recon
 from strix.tools.gitleaks_scan.tools import gitleaks_scan
 from strix.tools.graphql_abuse.tools import graphql_abuse
+from strix.tools.graphql_deep.tools import graphql_dos, graphql_field_leak
 from strix.tools.graphql_probe.tools import graphql_introspection
 from strix.tools.harvest.tools import discover_assets, walk_unauth
 from strix.tools.http_replay.tools import http_replay
@@ -132,6 +133,7 @@ from strix.tools.sourcemap.tools import sourcemap_recover
 from strix.tools.ssr_leak.tools import ssr_leak_scan
 from strix.tools.storage_probe.tools import storage_probe
 from strix.tools.stored_probe.tools import stored_probe
+from strix.tools.subdomain_takeover.tools import subdomain_takeover
 from strix.tools.todo.tools import (
     create_todo,
     delete_todo,
@@ -289,6 +291,9 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     rate_limit_probe,
     graphql_introspection,
     graphql_abuse,
+    graphql_field_leak,
+    graphql_dos,
+    subdomain_takeover,
     coverage_gaps,
     jwt_audit,
     jwt_confusion,
