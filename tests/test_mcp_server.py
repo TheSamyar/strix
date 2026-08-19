@@ -58,6 +58,7 @@ def test_initialize_advertises_strix() -> None:
     assert "DATA-LEAK PASS EARLY" in result["instructions"]
     assert "data_leakage" in result["instructions"]
     assert "do not redact" in result["instructions"]
+    assert "loot" in result["instructions"]
 
 
 def test_tools_list_includes_skill_and_report_tools() -> None:
@@ -120,6 +121,17 @@ def test_tools_list_includes_skill_and_report_tools() -> None:
     } <= names
     assert "create_agent" not in names
     assert "finish_scan" not in names
+    assert {
+        "start_listener",
+        "list_shells",
+        "shell_exec",
+        "read_shell",
+        "upgrade_pty",
+        "loot",
+        "privesc_scan",
+        "pivot_scan",
+        "close_shell",
+    } <= names
 
 
 @pytest.mark.usefixtures("mcp_run")

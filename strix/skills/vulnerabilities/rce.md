@@ -190,6 +190,7 @@ pop graphic-context
 
 **Privilege Escalation**
 - `sudo -l`; SUID binaries; capabilities (`getcap -r / 2>/dev/null`)
+- MCP: after `start_listener` catches a shell, `privesc_scan` runs those checks in one call
 
 **Persistence**
 - cron/systemd/user services; web shell behind auth
@@ -197,6 +198,7 @@ pop graphic-context
 
 **Lateral Movement**
 - SSH keys, cloud metadata credentials, internal service tokens
+- MCP: `loot` grabs identity + creds; `pivot_scan` TCP-connects internal hosts from the shell
 
 ## Testing Methodology
 
@@ -243,6 +245,8 @@ pop graphic-context
   netcat variant that ships in the image). Pair with a one-shot shell
   payload only when OAST + selective reads are insufficient — never
   drop a persistent shell when a single targeted command will prove it.
+- MCP path: `start_listener` → `list_shells` → `upgrade_pty` (optional) →
+  `loot` / `privesc_scan` / `pivot_scan`. File `loot.high_value` as evidence.
 
 ## Summary
 

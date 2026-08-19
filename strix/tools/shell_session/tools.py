@@ -54,7 +54,8 @@ async def list_shells(ctx: RunContextWrapper) -> str:
     """List caught reverse-shell sessions (id, remote address, liveness, pending output).
 
     Returns JSON with ``sessions``. Use a ``session_id`` with ``shell_exec`` /
-    ``read_shell`` / ``close_shell``.
+    ``read_shell`` / ``upgrade_pty`` / ``loot`` / ``privesc_scan`` /
+    ``pivot_scan`` / ``close_shell``.
     """
     del ctx
     sessions = await asyncio.to_thread(manager.list_shells)
@@ -99,6 +100,87 @@ async def read_shell(ctx: RunContextWrapper, session_id: str, timeout: float = 2
     """
     del ctx
     result = await asyncio.to_thread(manager.read_shell, session_id, timeout)
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
+@function_tool(timeout=30)
+async def upgrade_pty(ctx: RunContextWrapper, session_id: str) -> str:
+    """Stabilize a caught shell into a PTY so ``sudo`` / interactive commands work.
+
+    Sends the standard python-pty upgrade. Depends on the target having python;
+    if not, the raw line shell stays usable. Run this right after catching a
+    shell if you plan to use ``sudo`` or interactive tools.
+
+    Returns JSON with any ``output`` and a ``note``.
+
+    Args:
+        session_id: A session id from ``list_shells``.
+    """
+    del ctx
+    result = await asyncio.to_thread(manager.upgrade_pty, session_id)
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
+@function_tool(timeout=90)
+async def loot(ctx: RunContextWrapper, session_id: str) -> str:
+    """Grab report-ready proof from a caught shell in one call.
+
+    Runs a curated set of proof/loot commands — ``whoami``/``id``/``hostname``,
+    ``/etc/passwd``, ``env``, ``sudo -l``, SSH keys, ``.env``, and cloud IAM
+    credentials from the metadata endpoint — and returns their output. Use it
+    to turn a shell into the concrete impact evidence a report needs. Only on
+    authorized targets.
+
+    Returns JSON with ``loot`` (label → output, truncated) and ``high_value``
+    (labels that returned sensitive data: keys, creds, sudo).
+
+    Args:
+        session_id: A session id from ``list_shells``.
+    """
+    del ctx
+    result = await asyncio.to_thread(manager.loot, session_id)
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
+@function_tool(timeout=90)
+async def privesc_scan(ctx: RunContextWrapper, session_id: str) -> str:
+    """Quick local privilege-escalation enumeration in a caught shell.
+
+    Runs fast checks — ``sudo -l``, SUID binaries, file capabilities, cron,
+    world-writable dirs, kernel/OS — so "user shell" → "path to root" makes the
+    report. Cross-reference SUID/caps results with GTFOBins.
+
+    Returns JSON with ``checks`` (label → output) and ``notable`` (flagged
+    interesting results).
+
+    Args:
+        session_id: A session id from ``list_shells``.
+    """
+    del ctx
+    result = await asyncio.to_thread(manager.privesc_scan, session_id)
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
+@function_tool(timeout=300)
+async def pivot_scan(
+    ctx: RunContextWrapper, session_id: str, targets: list[str], ports: list[int] | None = None
+) -> str:
+    """Port-scan internal hosts from inside a caught shell — demonstrate pivot.
+
+    TCP-connect-tests each ``targets`` host on ``ports`` using the shell's bash
+    ``/dev/tcp``, proving reach into an internal network the attacker couldn't
+    touch directly (the impact behind an SSRF/RCE foothold). Capped at 200
+    host x port pairs per call.
+
+    Returns JSON with ``open`` (host/port list) and ``tested`` count.
+
+    Args:
+        session_id: A session id from ``list_shells``.
+        targets: Internal hosts/IPs to scan (e.g. ``["10.0.0.5","192.168.1.1"]``).
+        ports: Ports to test (default a common set: 22/80/443/3306/…).
+    """
+    del ctx
+    result = await asyncio.to_thread(manager.pivot_scan, session_id, targets, ports)
     return json.dumps(result, ensure_ascii=False, default=str)
 
 

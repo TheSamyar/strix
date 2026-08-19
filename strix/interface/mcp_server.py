@@ -137,9 +137,13 @@ from strix.tools.session_fixation.tools import reset_token_probe, session_fixati
 from strix.tools.shell_session.tools import (
     close_shell,
     list_shells,
+    loot,
+    pivot_scan,
+    privesc_scan,
     read_shell,
     shell_exec,
     start_listener,
+    upgrade_pty,
 )
 from strix.tools.signed_url.tools import signed_url_probe
 from strix.tools.sourcemap.tools import sourcemap_recover
@@ -227,9 +231,12 @@ escalation), authentication/session flaws, business-logic abuse, and multi-step 
 chains, not just single-request bugs. Treat each finding as a pivot: ask what it \
 unlocks next and follow it to maximum impact. For BLIND bugs (blind SSRF, blind \
 XSS, DNS exfil, RCE) call oast_get_domain, plant the domain in the payload, then \
-oast_poll — a callback is the proof. If the target is an AI/LLM app or exposes \
-its own MCP tools, run mcp_tool_poisoning_audit on those tool descriptions and \
-test direct/indirect prompt injection (load_skill llm_prompt_injection).
+oast_poll — a callback is the proof. Confirmed RCE: start_listener, catch the \
+shell, then loot / privesc_scan / pivot_scan so the report has identity, creds, \
+and internal-reach proof rather than just "RCE confirmed". If the target is an \
+AI/LLM app or exposes its own MCP tools, run mcp_tool_poisoning_audit on those \
+tool descriptions and test direct/indirect prompt injection \
+(load_skill llm_prompt_injection).
 
 5. PROVE BEFORE FILING — before create_vulnerability_report, call \
 validate_finding to re-run the PoC and prove the claimed impact (for a data \
@@ -310,6 +317,10 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     list_shells,
     shell_exec,
     read_shell,
+    upgrade_pty,
+    loot,
+    privesc_scan,
+    pivot_scan,
     close_shell,
     deep_fuzz,
     param_discover,
