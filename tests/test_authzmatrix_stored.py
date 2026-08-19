@@ -122,3 +122,32 @@ def test_stored_not_surfaced(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_stored_requires_sweep_urls() -> None:
     out = stored._stored_probe_impl("https://x/c", "t", [], "POST", "body", None, None, 10)
     assert out["success"] is False
+
+
+def test_stored_second_order_ssti_detected(monkeypatch: pytest.MonkeyPatch) -> None:
+    import re
+
+    store_state = {"saved": ""}
+
+    def _fake(method: str, url: str, headers: Any, body: Any, *a: Any, **k: Any) -> dict[str, Any]:
+        if url.endswith("/profile"):  # inject/store
+            import json
+
+            store_state["saved"] = json.loads(body)["bio"]
+            return _resp("saved", 201)
+        # sink renders the stored value through a template engine: {{a*b}} -> product
+        rendered = re.sub(
+            r"\{\{(\d+)\*(\d+)\}\}",
+            lambda m: str(int(m.group(1)) * int(m.group(2))),
+            store_state["saved"],
+        )
+        return _resp(f"<div>{rendered}</div>")
+
+    monkeypatch.setattr(stored, "_replay_impl", _fake)
+    out = stored._stored_probe_impl(
+        "https://x/profile", "bio", ["https://x/u/view"], "POST", "body", None, None, 10
+    )
+    assert out["possible_stored_ssti"] is True
+    hit = out["surfaced_on"][0]
+    assert hit["stored_ssti"] is True
+    assert "SSTI" in hit["kind"]
