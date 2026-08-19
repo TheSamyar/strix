@@ -30,7 +30,9 @@ High-signal flags:
 - `-o <file> -of <json|ejson|md|html|csv|ecsv>` structured output
 
 Agent-safe baseline for automation:
-`ffuf -w wordlist.txt -u https://target.tld/FUZZ -mc 200,204,301,302,307,401,403,405 -ac -t 20 -rate 50 -timeout 10 -noninteractive -of json -o ffuf.json`
+`ffuf -w /usr/share/seclists/Discovery/Web-Content/raft-large-words.txt -u https://target.tld/FUZZ -mc 200,204,301,302,307,401,403,405 -ac -t 20 -rate 50 -timeout 10 -noninteractive -of json -o ffuf.json`
+
+Sandbox wordlists: `$SECLISTS` → `/usr/share/seclists`. Start with `Discovery/Web-Content/raft-large-words.txt`.
 
 Common patterns:
 - Basic path fuzzing:

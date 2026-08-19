@@ -5,6 +5,8 @@ description: "Pre-installed security tools in the Strix container"
 
 Strix runs inside a Kali Linux-based Docker container with a comprehensive set of security tools pre-installed. The agent can use any of these tools through the [terminal](/tools/terminal).
 
+Living Kali catalog vs this image: `containers/KALI_COVERAGE.md` — HAVE / WANT / SKIP. Flip the status in the same PR as Dockerfile package changes.
+
 ## Reconnaissance
 
 | Tool                                                       | Description                            |
@@ -14,7 +16,9 @@ Strix runs inside a Kali Linux-based Docker container with a comprehensive set o
 | [httpx](https://github.com/projectdiscovery/httpx)         | HTTP probing and analysis              |
 | [Katana](https://github.com/projectdiscovery/katana)       | Web crawling and spidering             |
 | [ffuf](https://github.com/ffuf/ffuf)                       | Fast web fuzzer                        |
-| [Nmap](https://nmap.org)                                   | Network scanning and service detection |
+| [seclists](https://github.com/danielmiessler/SecLists)     | Wordlists (`$SECLISTS` = `/usr/share/seclists`) |
+| [whatweb](https://github.com/urbanadventurer/WhatWeb) | Tech fingerprinting |
+| [sslscan](https://github.com/rbsec/sslscan) | TLS cipher / certificate scan |
 
 ## Web Testing
 
@@ -32,7 +36,13 @@ Strix runs inside a Kali Linux-based Docker container with a comprehensive set o
 | [Nuclei](https://github.com/projectdiscovery/nuclei) | Template-based vulnerability scanner               |
 | [SQLMap](https://sqlmap.org)                         | Automatic SQL injection detection and exploitation |
 | [Wapiti](https://wapiti-scanner.github.io)           | Web application vulnerability scanner              |
-| [ZAP](https://zaproxy.org)                           | OWASP Zed Attack Proxy                             |
+| [commix](https://github.com/commixproject/commix)    | Command injection                                  |
+| [SSTImap](https://github.com/vladko312/SSTImap)      | Server-side template injection                     |
+| [crlfuzz](https://github.com/dwisiswant0/crlfuzz)    | CRLF injection                                     |
+| [wpscan](https://github.com/wpscanteam/wpscan)       | WordPress enumeration                              |
+| [nikto](https://github.com/sullo/nikto)              | Classic web misconfig scan (noisy; prefer nuclei)  |
+| [searchsploit](https://www.exploit-db.com/searchsploit) | Local Exploit-DB lookup                         |
+| [hashid](https://github.com/psypanda/hashID)         | Hash type identification                           |
 
 ## JavaScript Analysis
 
@@ -84,7 +94,7 @@ Strix runs inside a Kali Linux-based Docker container with a comprehensive set o
 
 | Tool                                 | Description                 |
 | ------------------------------------ | --------------------------- |
-| [Playwright](https://playwright.dev) | Headless browser automation |
+| [agent-browser](https://github.com/vercel-labs/agent-browser) | Headless Chromium automation |
 
 <Note>
   All tools are pre-configured and ready to use. The agent selects the appropriate tool based on the vulnerability being tested.

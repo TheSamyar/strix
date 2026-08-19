@@ -32,6 +32,55 @@ def test_off_allowlist_rejected_without_subprocess(monkeypatch: pytest.MonkeyPat
             ["--level", "5"],
             ["sqlmap", "-u", "https://x/y?id=1", "--batch", "--level", "5"],
         ),
+        (
+            "sslscan",
+            "target.tld:443",
+            ["--no-failed"],
+            ["sslscan", "target.tld:443", "--no-failed"],
+        ),
+        (
+            "sstimap",
+            "https://x/page?name=a",
+            ["-l", "1"],
+            ["sstimap", "-u", "https://x/page?name=a", "-l", "1"],
+        ),
+        (
+            "commix",
+            "https://x/cmd?q=1",
+            ["--level", "1"],
+            ["commix", "-u", "https://x/cmd?q=1", "--batch", "--level", "1"],
+        ),
+        (
+            "whatweb",
+            "https://x",
+            ["-a", "1"],
+            ["whatweb", "https://x", "-a", "1"],
+        ),
+        (
+            "crlfuzz",
+            "https://x",
+            ["-s"],
+            ["crlfuzz", "-u", "https://x", "-s"],
+        ),
+        (
+            "searchsploit",
+            "apache 2.4",
+            ["-j"],
+            ["searchsploit", "apache 2.4", "-j"],
+        ),
+        ("hashid", "$1$abc", ["-j"], ["hashid", "$1$abc", "-j"]),
+        (
+            "wpscan",
+            "https://x",
+            ["--enumerate", "vp"],
+            ["wpscan", "--url", "https://x", "--enumerate", "vp"],
+        ),
+        (
+            "nikto",
+            "https://x",
+            ["-Tuning", "9"],
+            ["nikto", "-host", "https://x", "-Tuning", "9"],
+        ),
     ],
 )
 def test_argv_built_as_list_never_shell(

@@ -26,6 +26,13 @@ _ALLOWLIST: dict[str, list[str]] = {
     "httpx": ["httpx", "-u", "{target}", "{extra}"],
     "ffuf": ["ffuf", "-u", "{target}", "{extra}"],
     "wpscan": ["wpscan", "--url", "{target}", "{extra}"],
+    "sslscan": ["sslscan", "{target}", "{extra}"],
+    "sstimap": ["sstimap", "-u", "{target}", "{extra}"],
+    "commix": ["commix", "-u", "{target}", "--batch", "{extra}"],
+    "whatweb": ["whatweb", "{target}", "{extra}"],
+    "crlfuzz": ["crlfuzz", "-u", "{target}", "{extra}"],
+    "searchsploit": ["searchsploit", "{target}", "{extra}"],
+    "hashid": ["hashid", "{target}", "{extra}"],
 }
 
 
@@ -99,12 +106,14 @@ async def run_scanner(
     """Run one allowlisted site-audit scanner against an authorized target.
 
     Only runs scanners on a hardcoded allowlist — ``nmap``, ``sqlmap``,
-    ``nikto``, ``httpx``, ``ffuf``, ``wpscan`` — against targets the
-    operator is authorized to test; there are no scope guardrails, the
-    operator owns scope. Any other ``tool`` is rejected with a structured
-    error. argv is built as a list and run without a shell, so
-    ``extra_args`` are passed as discrete arguments (no shell-metacharacter
-    injection).
+    ``nikto``, ``httpx``, ``ffuf``, ``wpscan``, ``sslscan``, ``sstimap``,
+    ``commix``, ``whatweb``, ``crlfuzz``, ``searchsploit``, ``hashid`` —
+    against targets the operator is authorized to test; there are no
+    scope guardrails, the operator owns scope. Any other ``tool`` is
+    rejected with a structured error. argv is built as a list and run
+    without a shell, so ``extra_args`` are passed as discrete arguments
+    (no shell-metacharacter injection). ``searchsploit`` / ``hashid``
+    take a query or hash in ``target``, not a URL.
 
     Returns JSON with ``tool``, ``argv``, ``returncode``, ``stdout`` and
     ``stderr`` (each truncated to 20k chars), and ``timed_out``. If the tool

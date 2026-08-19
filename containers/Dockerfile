@@ -17,6 +17,7 @@ RUN mkdir -p /out/bin && \
     go install -v github.com/projectdiscovery/cvemap/cmd/vulnx@latest && \
     go install -v github.com/jaeles-project/gospider@latest && \
     go install -v github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest && \
+    go install -v github.com/dwisiswant0/crlfuzz/cmd/crlfuzz@latest && \
     go install -v golang.org/x/vuln/cmd/govulncheck@latest
 
 # ---------------------------------------------------------------------------
@@ -24,6 +25,7 @@ RUN mkdir -p /out/bin && \
 # ---------------------------------------------------------------------------
 FROM kalilinux/kali-rolling:latest
 
+# Kali catalog vs this image: containers/KALI_COVERAGE.md (flip status in the same PR as package changes).
 LABEL description="AI Agent Penetration Testing Environment with Comprehensive Automated Tools"
 
 RUN apt-get update && \
@@ -53,6 +55,8 @@ RUN apt-get update && \
     iproute2 iputils-ping netcat-traditional \
     nmap ncat ndiff \
     sqlmap nuclei subfinder naabu ffuf \
+    seclists exploitdb sslscan sstimap commix \
+    wpscan whatweb nikto hashid \
     nodejs npm pipx \
     golang-go \
     libcap2-bin \
@@ -216,6 +220,7 @@ RUN apt-get autoremove -y && \
 
 ENV PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:/app/.venv/bin:$PATH"
 ENV VIRTUAL_ENV="/app/.venv"
+ENV SECLISTS=/usr/share/seclists
 
 WORKDIR /app
 
@@ -260,7 +265,9 @@ ENV PYTHONPATH=/opt/strix-python
 # the venv (which ships requests, httpx, bs4, lxml, pyjwt, cryptography, and the
 # Caido SDK) instead of the externally-managed system interpreter.
 RUN echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:/app/.venv/bin:$PATH"' >> /home/pentester/.bashrc && \
-    echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:/app/.venv/bin:$PATH"' >> /home/pentester/.profile
+    echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:/app/.venv/bin:$PATH"' >> /home/pentester/.profile && \
+    echo 'export SECLISTS="${SECLISTS:-/usr/share/seclists}"' >> /home/pentester/.bashrc && \
+    echo 'export SECLISTS="${SECLISTS:-/usr/share/seclists}"' >> /home/pentester/.profile
 
 USER root
 COPY containers/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
