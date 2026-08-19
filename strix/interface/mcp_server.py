@@ -61,6 +61,7 @@ from strix.tools.harvest.tools import discover_assets, walk_unauth
 from strix.tools.http_replay.tools import http_replay
 from strix.tools.jwt_audit.tools import jwt_audit
 from strix.tools.load_skill.tool import load_skill
+from strix.tools.mcp_audit.tools import mcp_tool_poisoning_audit
 from strix.tools.notes.tools import (
     create_note,
     delete_note,
@@ -71,6 +72,7 @@ from strix.tools.notes.tools import (
 )
 from strix.tools.npm_audit.tools import npm_audit
 from strix.tools.nuclei_scan.tools import nuclei_scan
+from strix.tools.oast.tools import oast_get_domain, oast_poll
 from strix.tools.openapi_import.tools import import_openapi
 from strix.tools.osv_scan.tools import osv_scan
 from strix.tools.proxy.tools import (
@@ -164,7 +166,11 @@ first few bugs.
 4. CHAIN AND GO DEEP — test access control (IDOR, horizontal/vertical privilege \
 escalation), authentication/session flaws, business-logic abuse, and multi-step \
 chains, not just single-request bugs. Treat each finding as a pivot: ask what it \
-unlocks next and follow it to maximum impact.
+unlocks next and follow it to maximum impact. For BLIND bugs (blind SSRF, blind \
+XSS, DNS exfil, RCE) call oast_get_domain, plant the domain in the payload, then \
+oast_poll — a callback is the proof. If the target is an AI/LLM app or exposes \
+its own MCP tools, run mcp_tool_poisoning_audit on those tool descriptions and \
+test direct/indirect prompt injection (load_skill llm_prompt_injection).
 
 5. PROVE BEFORE FILING — before create_vulnerability_report, call \
 validate_finding to re-run the PoC and prove the claimed impact (for a data \
@@ -230,6 +236,9 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     jwt_audit,
     backend_rules_probe,
     frontend_secret_scan,
+    oast_get_domain,
+    oast_poll,
+    mcp_tool_poisoning_audit,
     validate_finding,
     retest_findings,
     diff_response,
