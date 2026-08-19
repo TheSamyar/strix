@@ -29,6 +29,7 @@ from strix.tools.attack_surface.tools import (
     record_endpoint,
     record_role,
 )
+from strix.tools.authz_probe.tools import authz_probe
 from strix.tools.chains.tools import (
     add_chain_step,
     chain_finding,
@@ -136,9 +137,9 @@ code-path inventory, not optional recon.
 data exposure. Map tenants, users, workspaces, projects, conversations, files, \
 exports, logs, RAG/vector stores, prompts, job IDs, signed URLs, cache keys, \
 and integration payloads. Use at least two identities/tenants when available; \
-replay list/view/search/export/download/status endpoints across boundaries and \
-diff status, fields, lengths, digests, and cache headers. load_skill \
-data_leakage.
+store each as a credential and run authz_probe to replay list/view/search/\
+export/download/status endpoints across boundaries and diff status, lengths, \
+and body digests in one call. load_skill data_leakage.
 
 3. SYSTEMATIC PER-SURFACE x PER-CLASS TESTING — for each endpoint/parameter, \
 test every relevant vulnerability class. Run list_skills to see the packs, and \
@@ -206,6 +207,7 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     mark_matrix_cell,
     import_openapi,
     http_replay,
+    authz_probe,
     validate_finding,
     diff_response,
     store_credential,
@@ -416,10 +418,16 @@ async def _invoke_host_tool(name: str, arguments: dict[str, Any]) -> dict[str, A
     return _tool_result(text)
 
 
+def _dict_field(container: Mapping[str, Any], key: str) -> dict[str, Any]:
+    """Return container[key] if it's a dict, else {} — keeps mypy narrowing happy."""
+    value = container.get(key)
+    return value if isinstance(value, dict) else {}
+
+
 def _call_tool_response(msg: Mapping[str, Any]) -> dict[str, Any]:
-    params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+    params = _dict_field(msg, "params")
     name = params.get("name")
-    arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
+    arguments = _dict_field(params, "arguments")
     if not isinstance(name, str) or not name:
         return _rpc_error(msg, -32602, "tools/call requires params.name")
     try:
@@ -495,7 +503,7 @@ def _resource_contents(uri: str) -> dict[str, Any] | None:
 
 
 def _read_resource_response(msg: Mapping[str, Any]) -> dict[str, Any]:
-    params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+    params = _dict_field(msg, "params")
     uri = params.get("uri")
     if not isinstance(uri, str) or not uri:
         return _rpc_error(msg, -32602, "resources/read requires params.uri")
@@ -530,11 +538,11 @@ def mcp_prompt_descriptors() -> list[dict[str, Any]]:
 
 
 def _get_prompt_response(msg: Mapping[str, Any]) -> dict[str, Any]:
-    params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+    params = _dict_field(msg, "params")
     name = params.get("name")
     if name != PENTEST_PROMPT:
         return _rpc_error(msg, -32602, f"Unknown prompt: {name}")
-    args = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
+    args = _dict_field(params, "arguments")
     target = args.get("target")
     if not isinstance(target, str) or not target:
         return _rpc_error(msg, -32602, "pentest_target requires arguments.target")
@@ -616,7 +624,7 @@ def _read_message() -> dict[str, Any] | None:
 
 def _progress_token(params: Mapping[str, Any]) -> str | int | None:
     """Pull the client's progressToken from params._meta, if any (MCP spec)."""
-    meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
+    meta = _dict_field(params, "_meta")
     token = meta.get("progressToken")
     return token if isinstance(token, (str, int)) else None
 
@@ -634,10 +642,10 @@ async def _dispatch_tool_call(msg: Mapping[str, Any]) -> None:
     """Run one tools/call as its own task so slow scanners don't block the
     read loop, ping, or other tool calls. Emits start/done progress when the
     client passed a progressToken."""
-    params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+    params = _dict_field(msg, "params")
     token = _progress_token(params)
     name = params.get("name")
-    arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
+    arguments = _dict_field(params, "arguments")
     if not isinstance(name, str) or not name:
         _write_message(_rpc_error(msg, -32602, "tools/call requires params.name"))
         return
