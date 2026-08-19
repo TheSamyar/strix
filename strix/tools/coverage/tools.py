@@ -16,6 +16,7 @@ import re
 
 from agents import RunContextWrapper, function_tool
 
+from strix.harvest import walk_coverage
 from strix.report.state import get_global_report_state
 from strix.skills import get_available_skills
 from strix.tools.todo.tools import coverage_todos, delete_todos
@@ -39,9 +40,7 @@ def _pack_name(title: str) -> str | None:
 
 
 def _all_pack_names() -> set[str]:
-    return {
-        p["name"] for p in get_available_skills().get("vulnerabilities", []) if p.get("name")
-    }
+    return {p["name"] for p in get_available_skills().get("vulnerabilities", []) if p.get("name")}
 
 
 # Per-target-type relevance. Hardcoded sets of vuln-pack names (dynamically
@@ -131,6 +130,7 @@ def _do_coverage_report() -> dict[str, object]:
         "findings_count": findings_count,
         "findings_by_severity": by_severity,
         "findings_by_class": by_class,
+        "walk": walk_coverage(),
     }
 
 

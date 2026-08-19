@@ -5,8 +5,8 @@ the Strix relay (``STRIX_APP_URL``). The browser never talks to the relay
 directly, and the report password generated locally is never sent to it.
 
 State lives in ``~/.strix/viewer-auth.json`` (0600). ``is_verified`` is a local
-flag that unlocks browsing the run history list; the relay still enforces token
-expiry when a report is actually sent.
+flag used for encrypted PDF email; the relay still enforces token expiry when
+a report is actually sent.
 """
 
 from __future__ import annotations
@@ -101,11 +101,11 @@ def _from_epoch(seconds: float) -> datetime | None:
 def is_verified() -> bool:
     """True when a usable email + token record with a valid future expiry exists.
 
-    The expiry returned by OTP verification is enforced here so history stops
-    unlocking once the token lapses. It fails closed: a record whose expiry is
-    absent, blank, or unparseable requires re-verification rather than unlocking
-    forever, keeping the local gate in step with the relay (which rejects an
-    expired token on report send).
+    The expiry returned by OTP verification is enforced here so PDF email
+    stops working once the token lapses. It fails closed: a record whose expiry
+    is absent, blank, or unparseable requires re-verification rather than
+    staying valid forever, keeping the local gate in step with the relay
+    (which rejects an expired token on report send).
     """
     record = read_auth()
     if record is None:
@@ -186,9 +186,9 @@ def otp_verify(email: str, code: str) -> dict[str, Any]:
         timeout=_OTP_TIMEOUT,
     )
     if status == 200 and isinstance(data.get("token"), str):
-        # A token with no usable expiry cannot unlock history locally (the gate
-        # fails closed), so treat such a response as a failed verification rather
-        # than reporting success and then leaving the user stuck unverified.
+        # A token with no usable expiry cannot authorize PDF email locally (the
+        # gate fails closed), so treat such a response as a failed verification
+        # rather than reporting success and then leaving the user stuck unverified.
         if parse_expiry(data.get("expires_at")) is None:
             raise RelayError("unavailable")
         return data

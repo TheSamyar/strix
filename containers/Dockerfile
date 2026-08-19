@@ -198,6 +198,11 @@ RUN set -eux; \
 
 RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
+# linpeas: post-RCE local privesc enumeration. Staged in the image; the agent
+# uploads it to a compromised host to confirm an escalation path.
+RUN curl -fsSL https://github.com/peass-ng/PEASS-ng/releases/latest/download/linpeas.sh -o /opt/linpeas.sh && \
+    chmod 0755 /opt/linpeas.sh
+
 RUN apt-get install -y wapiti
 
 USER pentester

@@ -38,8 +38,8 @@ logger = logging.getLogger(__name__)
 
 
 SCAN_MODES = ("quick", "standard", "deep")
-SITE_PROFILES = ("auto", "generic", "nextjs", "wordpress")
-CONCRETE_SITE_PROFILES = ("generic", "nextjs", "wordpress")
+SITE_PROFILES = ("auto", "generic", "nextjs", "wordpress", "fastapi")
+CONCRETE_SITE_PROFILES = ("generic", "nextjs", "wordpress", "fastapi")
 
 
 @dataclass(frozen=True)
@@ -120,6 +120,19 @@ class SiteProfileDetection:
             "errors": list(self.errors),
         }
 
+
+_HARVEST = AuditJob(
+    "harvest",
+    "Domain harvest",
+    (),
+    "Deterministic host expand, OpenAPI/catalog ingest, and unauth walk.",
+)
+_FASTAPI_AUTH = AuditJob(
+    "fastapi_auth",
+    "FastAPI auth specialist",
+    ("fastapi", "oauth", "authentication_jwt"),
+    "Test OAuth/DCR/CORS, X-Admin-Impersonate-*, and FastAPI auth dependencies.",
+)
 
 _QUICK: tuple[AuditJob, ...] = (
     AuditJob(
@@ -339,7 +352,45 @@ def jobs_for_mode(mode: str, *, site_profile: str = "generic") -> tuple[AuditJob
             _WORDPRESS_STANDARD_EXTRA,
             _WORDPRESS_DEEP_EXTRA,
         )
+    if site_profile == "fastapi":
+        return (
+            _HARVEST,
+            _FASTAPI_AUTH,
+            *_jobs_for_mode(mode, _QUICK, _STANDARD_EXTRA, _DEEP_EXTRA),
+        )
     return _jobs_for_mode(mode, _QUICK, _STANDARD_EXTRA, _DEEP_EXTRA)
+
+
+def jobs_for_profiles(mode: str, profiles: Sequence[str]) -> tuple[AuditJob, ...]:
+    wanted = tuple(profile for profile in profiles if profile in CONCRETE_SITE_PROFILES)
+    if not wanted:
+        wanted = ("generic",)
+    seen: set[str] = set()
+    out: list[AuditJob] = []
+
+    def add(jobs: Sequence[AuditJob]) -> None:
+        for job in jobs:
+            if job.id not in seen:
+                seen.add(job.id)
+                out.append(job)
+
+    if "fastapi" in wanted:
+        add((_HARVEST, _FASTAPI_AUTH))
+        add(_jobs_for_mode(mode, _QUICK, _STANDARD_EXTRA, _DEEP_EXTRA))
+    if "nextjs" in wanted:
+        add(_jobs_for_mode(mode, _NEXTJS_QUICK, _NEXTJS_STANDARD_EXTRA, _NEXTJS_DEEP_EXTRA))
+    if "wordpress" in wanted:
+        add(
+            _jobs_for_mode(
+                mode,
+                _WORDPRESS_QUICK,
+                _WORDPRESS_STANDARD_EXTRA,
+                _WORDPRESS_DEEP_EXTRA,
+            )
+        )
+    if "generic" in wanted and "fastapi" not in wanted:
+        add(_jobs_for_mode(mode, _QUICK, _STANDARD_EXTRA, _DEEP_EXTRA))
+    return tuple(out)
 
 
 def auth_from_args(args: Any) -> AuditAuth:
@@ -408,7 +459,7 @@ def _append_signal(evidence: list[str], label: str) -> None:
 def _score_response(label: str, result: FetchResult, evidence: list[str]) -> dict[str, int]:
     body = result.body.lower()
     headers = {key.lower(): value.lower() for key, value in result.headers.items()}
-    scores = {"nextjs": 0, "wordpress": 0}
+    scores = {"nextjs": 0, "wordpress": 0, "fastapi": 0}
 
     if "__next_data__" in body:
         scores["nextjs"] += 3
@@ -435,7 +486,34 @@ def _score_response(label: str, result: FetchResult, evidence: list[str]) -> dic
     if "wordpress" in body or "wordpress" in headers.get("x-pingback", ""):
         scores["wordpress"] += 2
         _append_signal(evidence, f"{label}: WordPress marker")
+    _score_fastapi(label, result, body, headers, evidence, scores)
     return scores
+
+
+def _score_fastapi(
+    label: str,
+    result: FetchResult,
+    body: str,
+    headers: dict[str, str],
+    evidence: list[str],
+    scores: dict[str, int],
+) -> None:
+    if "uvicorn" in headers.get("server", ""):
+        scores["fastapi"] += 3
+        _append_signal(evidence, f"{label}: server uvicorn")
+    if label == "openapi" and result.status == 200 and "openapi" in body:
+        scores["fastapi"] += 3
+        _append_signal(evidence, f"{label}: openapi.json")
+    if label == "mcp" and result.status in {401, 403, 406}:
+        scores["fastapi"] += 2
+        _append_signal(evidence, f"{label}: /mcp auth")
+    mcp_body = label == "mcp" and result.status == 200
+    if mcp_body and any(marker in body for marker in ("jsonrpc", "openapi", '"mcp"', "mcp_url")):
+        scores["fastapi"] += 2
+        _append_signal(evidence, f"{label}: /mcp")
+    if "/mcp" in body or "fastapi" in body:
+        scores["fastapi"] += 1
+        _append_signal(evidence, f"{label}: FastAPI/MCP hint")
 
 
 def detect_site_profile(
@@ -447,13 +525,14 @@ def detect_site_profile(
 ) -> SiteProfileDetection:
     if requested not in SITE_PROFILES:
         raise ValueError(f"unknown site-profile {requested!r}; expected one of {SITE_PROFILES}")
+    empty_scores = {"nextjs": 0, "wordpress": 0, "fastapi": 0}
     if requested != "auto":
         return SiteProfileDetection(
             requested=requested,
             resolved=requested,
             target_urls=tuple(urls),
             evidence=(f"site profile forced to {requested}",),
-            scores={"nextjs": 0, "wordpress": 0},
+            scores=empty_scores,
         )
     if not urls:
         return SiteProfileDetection(
@@ -461,20 +540,22 @@ def detect_site_profile(
             resolved="generic",
             target_urls=(),
             evidence=("no live URL targets to profile",),
-            scores={"nextjs": 0, "wordpress": 0},
+            scores=empty_scores,
         )
 
     resolved_fetcher = fetcher or _default_fetcher
     headers = _auth_headers(auth)
     evidence: list[str] = []
     errors: list[str] = []
-    totals = {"nextjs": 0, "wordpress": 0}
+    totals = {"nextjs": 0, "wordpress": 0, "fastapi": 0}
 
     for target_url in urls:
         for label, url in (
             ("root", target_url),
             ("wp-json", urljoin(target_url.rstrip("/") + "/", "wp-json/")),
             ("wp-login", urljoin(target_url.rstrip("/") + "/", "wp-login.php")),
+            ("openapi", urljoin(target_url.rstrip("/") + "/", "openapi.json")),
+            ("mcp", urljoin(target_url.rstrip("/") + "/", "mcp")),
         ):
             try:
                 result = resolved_fetcher(url, headers)
@@ -484,9 +565,16 @@ def detect_site_profile(
             scores = _score_response(label, result, evidence)
             totals["nextjs"] += scores["nextjs"]
             totals["wordpress"] += scores["wordpress"]
+            totals["fastapi"] += scores["fastapi"]
 
     if totals["nextjs"] >= 2 and totals["wordpress"] >= 2:
         resolved = "generic"
+    elif (
+        totals["fastapi"] >= 2
+        and totals["fastapi"] > totals["nextjs"]
+        and totals["fastapi"] > totals["wordpress"]
+    ):
+        resolved = "fastapi"
     elif totals["nextjs"] > totals["wordpress"] and totals["nextjs"] >= 2:
         resolved = "nextjs"
     elif totals["wordpress"] > totals["nextjs"] and totals["wordpress"] >= 2:
@@ -745,9 +833,15 @@ def codex_worktree_argv(path: Path) -> list[str]:
     return ["git", "worktree", "add", "--detach", str(path), "HEAD"]
 
 
-def audit_exit_code(results: Sequence[JobResult], finding_count: int) -> int:
+def audit_exit_code(
+    results: Sequence[JobResult],
+    finding_count: int,
+    walk_incomplete: bool = False,
+) -> int:
     if finding_count > 0:
         return 2
+    if walk_incomplete:
+        return 1
     if results and all(item.exit_code != 0 for item in results):
         return 1
     return 0
@@ -863,7 +957,9 @@ def run_jobs(  # noqa: PLR0915
     }
     worker_run_base = parent.relative_to(original_cwd / "strix_runs").as_posix()
 
-    def run_job(job: AuditJob) -> JobResult:  # noqa: PLR0912, PLR0915
+    def run_job(job: AuditJob) -> JobResult:  # noqa: PLR0911, PLR0912, PLR0915
+        if job.id == "harvest":
+            return JobResult(job.id, 0, timed_out=False)
         if _interrupted.is_set():
             return JobResult(job.id, 1, timed_out=False)
         plan = plans[job.id]
@@ -969,7 +1065,11 @@ def run_jobs(  # noqa: PLR0915
             finally:
                 executor.shutdown(wait=True, cancel_futures=True)
 
-        reports = remint_ids(load_worker_reports(parent, [job.id for job in jobs]))
+        job_ids = [job.id for job in jobs]
+        harvest_path = parent / "workers" / "harvest" / "vulnerabilities.json"
+        if "harvest" not in job_ids and harvest_path.is_file():
+            job_ids = ["harvest", *job_ids]
+        reports = remint_ids(load_worker_reports(parent, job_ids))
         jobs_summary = "\n".join(
             f"{result.job_id}: exit {result.exit_code}"
             + (" (timed out)" if result.timed_out else "")

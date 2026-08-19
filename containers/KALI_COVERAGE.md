@@ -18,13 +18,8 @@ Skip reasons: `dup` (we already have a better equivalent) · `hw` (WiFi / BT / R
 
 ## WANT (add these)
 
-Nothing P0 left. Next only if an engagement actually needs it:
-
-| Tool | Why |
-| --- | --- |
-| linpeas | Post-RCE confirmation on the *target*, not the sandbox. Copy onto a box you already own. |
-
-Do **not** expand WANT without a real engagement that needed it.
+Nothing. P0 and P1 are all in the image. Do **not** expand WANT without a real
+engagement that needed it.
 
 MCP host (no Docker): binaries must be on PATH. `run_scanner` returns `"not installed"` otherwise. Skills still load.
 
@@ -52,6 +47,7 @@ Kali-catalog tools:
 | nikto | apt |
 | hashid | apt |
 | crlfuzz | go |
+| linpeas | curl → `/opt/linpeas.sh` (post-RCE, upload to target) |
 | arjun | pipx |
 | dirsearch | pipx |
 | wafw00f | pipx |
@@ -177,7 +173,7 @@ Deduped. First category on [kali.org/tools](https://www.kali.org/tools/) wins.
 | laudanum, phpggc, webacoo, webshells, weevely, backdoor-factory, cymothoa | SKIP c2 |
 | seclists | HAVE |
 | lynis | SKIP scope (hardening audit) |
-| peass, linpeas | WANT (linpeas only, P1) |
+| peass, linpeas | HAVE (linpeas at `/opt/linpeas.sh`) |
 | winpeas | SKIP ad |
 | unix-privesc-check | SKIP dup (linpeas) |
 | bloodyad | SKIP ad |

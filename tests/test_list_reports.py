@@ -38,6 +38,7 @@ def _seed(state: ReportState) -> None:
         cwe="CWE-79",
         cvss=6.1,
         agent_name="XSS Agent",
+        evidence="GET /search?q=<script>alert(1)</script> reflected the payload verbatim.",
     )
     state.add_vulnerability_report(
         title="SQL Injection in login",
@@ -48,6 +49,7 @@ def _seed(state: ReportState) -> None:
         cwe="CWE-89",
         cvss=9.8,
         agent_name="SQLi Agent",
+        evidence="POST /api/login with username=' OR 1=1-- returned the admin session.",
     )
     state.add_vulnerability_report(
         title="CVE-2021-23337 in lodash 4.17.20",
@@ -86,11 +88,13 @@ def test_list_reports_metadata_first_and_sorted(report_state: ReportState) -> No
         "Reflected XSS in search",
     ]
     assert result["severity_counts"] == {"critical": 1, "high": 1, "medium": 1}
-    # compact entries carry a preview, never full-body fields
+    # compact entries carry a preview and evidence; PoC bodies stay behind include_details
     first = result["reports"][0]
     assert "description_preview" in first
     assert "poc_script_code" not in first
-    assert "evidence" not in first
+    assert first["evidence"] == (
+        "POST /api/login with username=' OR 1=1-- returned the admin session."
+    )
 
 
 def test_list_reports_filter_severity(report_state: ReportState) -> None:

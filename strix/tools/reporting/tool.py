@@ -742,7 +742,8 @@ async def create_vulnerability_report(
         remediation_steps: Specific, actionable fix (prose, no code).
         evidence: Concrete proof the issue is real and exploitable —
             request/response excerpts, observed behavior, tool output.
-            Use fenced code blocks; no internal identifiers/paths.
+            Include the actual leaked values; do not redact. Use fenced code
+            blocks; no internal identifiers/paths.
         assumptions: Short note on the assumptions/prerequisites that
             make this finding impactful or exploitable (e.g. "assumes an
             authenticated low-privilege user").
@@ -1518,7 +1519,8 @@ _VALID_SEVERITIES = frozenset(_SEVERITY_ORDER)
 _VALID_FINDING_CLASSES = frozenset({"dynamic", "dependency_cve"})
 _REPORT_DESCRIPTION_PREVIEW_CHARS = 280
 
-# Compact, listing-safe fields — no full bodies / PoC code / evidence.
+# Compact listing fields. Evidence is included so local reports stay usable
+# without a follow-up get_report; PoC/remediation bodies stay behind include_details.
 _REPORT_SUMMARY_FIELDS = (
     "id",
     "title",
@@ -1533,6 +1535,7 @@ _REPORT_SUMMARY_FIELDS = (
     "fix_effort",
     "agent_name",
     "timestamp",
+    "evidence",
 )
 
 
@@ -1789,11 +1792,11 @@ async def list_reports(
     By default each entry is compact: ``id``, ``title``, ``severity``,
     ``cvss``, ``finding_class``, ``cve`` / ``cwe``, ``target`` /
     ``endpoint``, ``fix_effort``, ``agent_name`` (who filed it), ``timestamp``,
-    plus a 280-char ``description_preview``. Entries you filed yourself are
-    flagged ``by_you: true``. The response also carries
+    ``evidence``, plus a 280-char ``description_preview``. Entries you filed
+    yourself are flagged ``by_you: true``. The response also carries
     ``total_count`` and ``severity_counts`` (counts per severity across all
     reports, ignoring filters). Set ``include_details=True`` for full report
-    bodies (PoC, evidence, remediation, code_locations) — token-expensive;
+    bodies (PoC, remediation, code_locations) — token-expensive;
     prefer ``get_report`` to drill into a single finding.
 
     Filters compose (all must match): ``severity`` and ``finding_class``

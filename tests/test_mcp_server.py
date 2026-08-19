@@ -16,6 +16,7 @@ from strix.interface.mcp_server import (
     mcp_tool_descriptors,
     run_mcp,
 )
+from strix.tools.todo.tools import _get_agent_todos
 
 
 if TYPE_CHECKING:
@@ -52,6 +53,9 @@ def test_initialize_advertises_strix() -> None:
     assert result["protocolVersion"] == "2024-11-05"
     assert result["serverInfo"]["name"] == "strix"
     assert "pentester" in result["instructions"]
+    assert "DATA-LEAK PASS EARLY" in result["instructions"]
+    assert "data_leakage" in result["instructions"]
+    assert "do not redact" in result["instructions"]
 
 
 def test_tools_list_includes_skill_and_report_tools() -> None:
@@ -74,6 +78,7 @@ def test_list_skills_returns_xss() -> None:
     catalog = json.loads(text)
     vuln_names = {item["name"] for item in catalog.get("vulnerabilities", [])}
     assert "xss" in vuln_names
+    assert "data_leakage" in vuln_names
 
 
 @pytest.mark.usefixtures("mcp_run")
@@ -181,7 +186,6 @@ def test_stdio_writes_newline_json(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_no_seed_skips_coverage_todos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     report_state_mod._global_report_state = None
-    from strix.tools.todo.tools import _get_agent_todos
 
     bootstrap_mcp_run("no-seed", seed_coverage=False)
     todos = _get_agent_todos("mcp")
@@ -197,9 +201,9 @@ def test_no_seed_skips_coverage_todos(tmp_path: Path, monkeypatch: pytest.Monkey
 def test_seed_still_creates_coverage_todos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     report_state_mod._global_report_state = None
-    from strix.tools.todo.tools import _get_agent_todos
 
     bootstrap_mcp_run("seeded")
     titles = [t["title"] for t in _get_agent_todos("mcp").values()]
     assert any("[coverage]" in title for title in titles)
+    assert any("[data-leak]" in title for title in titles)
     report_state_mod._global_report_state = None

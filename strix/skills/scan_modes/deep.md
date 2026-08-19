@@ -16,6 +16,7 @@ Thorough understanding before exploitation. Test every parameter, every endpoint
 **Whitebox (source available)**
 - Map every file, module, and code path in the repository
 - Start with broad source-aware triage (`semgrep`, `ast-grep`, `gitleaks`, `trufflehog`, `trivy fs`) and use outputs to drive deep review
+- Run an explicit data-leak pass with `data_leakage`: map tenants, workspaces, object references, files, exports, RAG/vector stores, prompts, logs, and caches before lower-impact checks
 - Execute at least one structural AST pass (`sg` and/or Tree-sitter) per repository and store artifacts for reuse
 - Keep AST artifacts bounded and query-driven (target relevant paths/sinks first; avoid whole-repo generic function dumps)
 - Use syntax-aware parsing (Tree-sitter tooling) to improve symbol, route, and sink extraction quality
@@ -30,6 +31,8 @@ Thorough understanding before exploitation. Test every parameter, every endpoint
 - Review file handling: upload, download, processing
 - Understand the deployment model and infrastructure assumptions
 - Check all dependency versions and repository risks against CVE/misconfiguration data
+- Beyond known CVEs, run a supply-chain pass with `supply_chain_dependency_confusion` (and the `dep_confusion` tool): flag internal packages unclaimed on public registries, typosquats, and malicious install scripts
+- For LLM/ML-backed features, run `ai_ml_security` alongside `data_leakage`: map model entry points, tools the model can call, output sinks, and RAG/vector stores
 - For quick CVE lookups on a named product/version, use `vulnx search <query>`
   (ProjectDiscovery's CVE database) before falling back to web_search
 
@@ -39,6 +42,7 @@ Thorough understanding before exploitation. Test every parameter, every endpoint
 - Complete content discovery with multiple wordlists
 - Technology fingerprinting on all assets
 - API discovery via docs, JavaScript analysis, fuzzing
+- Data-leak-first dynamic testing: use at least two identities/tenants when available, replay list/view/search/export/download/job endpoints across boundaries, and diff response bodies, fields, digests, and cache headers
 - Identify all parameters including hidden and rarely-used ones
 - Map all user roles with different account types
 - Document rate limiting, WAF rules, security controls
@@ -80,6 +84,7 @@ Test every input vector with every applicable technique.
 **Access Control**
 - Test every endpoint for horizontal and vertical access control
 - Parameter tampering on all object references
+- Treat every unauthorized read of restricted data as a primary data-leak candidate; validate tenant/user boundary crossing before filing
 - Forced browsing to all discovered resources
 - HTTP method tampering (GET vs POST vs PUT vs DELETE)
 - Access control after session state changes (logout, role change)
@@ -103,14 +108,19 @@ Test every input vector with every applicable technique.
 - Subdomain takeover
 - Prototype pollution (JavaScript applications)
 - CORS misconfiguration exploitation
-- WebSocket security testing
+- WebSocket security testing (`websocket` skill: CSWSH, per-message authz, cross-tenant frame leakage)
 - GraphQL-specific attacks (introspection, batching, nested queries)
+- Cryptographic failures (`cryptographic_failures`): predictable tokens/reset codes, ECB/IV reuse, padding oracles, hardcoded keys
+- Insecure LLM output handling (`ai_ml_security`): model output reaching XSS/SSRF/SQLi/RCE sinks and tool-privilege abuse
+- Web3/dApp targets (`web3_smart_contracts`): reentrancy, access control, oracle/price manipulation, signature replay
+- For API-heavy targets, sequence the authorization sweep with `api_security_top10` (BOLA/BFLA/BOPLA across a principal matrix)
 
 ## Phase 4: Vulnerability Chaining
 
 Individual bugs are starting points. Chain them for maximum impact:
 
 - Combine information disclosure with access control bypass
+- Chain data leaks into credential theft, tenant takeover, prompt/RAG exfiltration, or broader data access
 - Chain SSRF to reach internal services
 - Use low-severity findings to enable high-impact attacks
 - Build multi-step attack paths that automated tools miss

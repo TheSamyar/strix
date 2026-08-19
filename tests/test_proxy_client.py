@@ -198,12 +198,31 @@ class _Ctx:
         self.context = context
 
 
-def test_ctx_client_returns_client_when_present() -> None:
+@pytest.mark.asyncio
+async def test_ctx_client_returns_client_when_present() -> None:
     client = _FakeClient("host")
-    got = tools._ctx_client(cast("Any", _Ctx({"caido_client": client})))
+    got = await tools._ctx_client(cast("Any", _Ctx({"caido_client": client})))
     assert got is client
 
 
-def test_ctx_client_returns_none_without_client() -> None:
-    assert tools._ctx_client(cast("Any", _Ctx({}))) is None
-    assert tools._ctx_client(cast("Any", _Ctx(None))) is None
+@pytest.mark.asyncio
+async def test_ctx_client_falls_back_to_shared_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    # No client on the context → fall back to the shared self-connecting client.
+    shared = _FakeClient("shared")
+
+    async def _fake_get_client() -> Any:
+        return shared
+
+    monkeypatch.setattr(caido_api, "get_client", _fake_get_client)
+    got = await tools._ctx_client(cast("Any", _Ctx({})))
+    assert got is shared
+
+
+@pytest.mark.asyncio
+async def test_ctx_client_returns_none_when_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _boom() -> Any:
+        raise ConnectionError("no caido")
+
+    monkeypatch.setattr(caido_api, "get_client", _boom)
+    assert await tools._ctx_client(cast("Any", _Ctx({}))) is None
+    assert await tools._ctx_client(cast("Any", _Ctx(None))) is None

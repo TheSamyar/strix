@@ -30,16 +30,21 @@ def _resolve_skills(
 
     1. Whatever the caller asked for, in order.
     2. ``scan_modes/<mode>`` (always).
-    3. ``tooling/agent_browser`` (always — every agent has shell + the
+    3. ``vulnerabilities/data_leakage`` for deep scans — makes data exposure
+       hunting a first-class default instead of relying on broad disclosure
+       coverage.
+    4. ``tooling/agent_browser`` (always — every agent has shell + the
        agent-browser CLI).
-    4. ``tooling/python`` (always — Python runs through ``exec_command``;
+    5. ``tooling/python`` (always — Python runs through ``exec_command``;
        sandbox scripts can import ``caido_api`` for Caido automation).
-    5. ``coordination/root_agent`` for the root agent only — orchestration
+    6. ``coordination/root_agent`` for the root agent only — orchestration
        guidance for delegating to specialist subagents.
-    6. Whitebox-specific skills if applicable.
+    7. Whitebox-specific skills if applicable.
     """
     ordered: list[str] = list(requested or [])
     ordered.append(f"scan_modes/{scan_mode}")
+    if scan_mode == "deep":
+        ordered.append("vulnerabilities/data_leakage")
     ordered.append("tooling/agent_browser")
     ordered.append("tooling/python")
     if is_root:

@@ -179,7 +179,7 @@ curl http://169.254.169.254/latest/user-data
 
 1. Demonstrate unauthorized read/write of S3 objects or snapshots with evidence (object keys, ETags)
 2. Show IAM escalation from low-priv to higher-priv with exact API calls and resulting permissions
-3. Prove metadata credential theft path (SSRF or IMDS) with redacted temporary credentials scope
+3. Prove metadata credential theft path (SSRF or IMDS) with the actual temporary credentials and their scope
 4. Document resource ARN, policy statement, and misconfiguration root cause
 5. Confirm fix would block the specific principal/action/resource combination
 

@@ -163,7 +163,7 @@ curl -H "Metadata-Flavor: Google" \
 
 1. Demonstrate unauthorized GCS object read/list with bucket URL and object key
 2. Show IAM escalation path with exact role/member binding and resulting access
-3. Prove metadata token theft from compute context with redacted token scope
+3. Prove metadata token theft from compute context with the actual token and its scope
 4. Document project ID, resource name, and IAM binding root cause
 5. Confirm fix blocks the specific principal/permission/resource combination
 

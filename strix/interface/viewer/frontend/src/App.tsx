@@ -5,9 +5,6 @@ import {
   Bot,
   Mail,
   ChevronDown,
-  Radar,
-  Rocket,
-  ArrowUpRight,
   History,
 } from "lucide-react";
 import type { Vulnerability, VulnerabilitySeverity } from "@/types/issues";
@@ -34,7 +31,7 @@ import {
   type LoadedRun,
   type RunsPayload,
 } from "@/data/serverSource";
-import { SIGNUP_URL, ctaUrl, trackCta } from "@/lib/cta";
+import { trackCta } from "@/lib/cta";
 import { runTitle } from "@/lib/target-utils";
 import Sidebar from "@/components/Sidebar";
 import PastRunsView from "@/components/PastRunsView";
@@ -42,7 +39,6 @@ import EmailReportView from "@/components/EmailReportView";
 import { RunDetails } from "@/components/RunDetails";
 import { TrustToast } from "@/components/TrustToast";
 import FeedbackView from "@/components/FeedbackView";
-import { ProInlineCta } from "@/components/ProCta";
 
 export type View = "overview" | "issues" | "agents" | "history" | "email" | "feedback";
 
@@ -226,11 +222,6 @@ export default function App() {
     userSetView("history");
   }, [refreshRuns, userSetView]);
 
-  const onPastRunsVerified = useCallback(async () => {
-    await refreshAuth();
-    await refreshRuns();
-  }, [refreshAuth, refreshRuns]);
-
   const onForget = useCallback(async () => {
     await forgetAuth();
     await refreshAuth();
@@ -264,20 +255,13 @@ export default function App() {
         {/* Top bar */}
         <div className="border-b border-[#222]">
           <div className="max-w-[88rem] mx-auto px-3 sm:px-6 py-4 flex items-center gap-1.5">
-            <a
-              href={ctaUrl("https://app.strix.ai", "logo")}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => trackCta("logo", "topbar")}
-              className="flex items-center gap-1.5 opacity-90 transition-opacity hover:opacity-100 lg:hidden"
-              title="Open Strix Cloud"
-            >
+            <div className="flex items-center gap-1.5 lg:hidden">
               <img src="./logo.png" alt="Strix" className="w-10 h-8 object-cover" />
               <div className="text-base text-white font-medium tracking-tight">Strix</div>
-            </a>
+            </div>
             {run && <LiveIndicator finished={run.finished} />}
             <div className="ml-auto flex items-center gap-3">
-              {verified && runs && !runs.locked && runs.runs.length > 0 && (
+              {runs && !runs.locked && runs.runs.length > 0 && (
                 <RunSwitcher
                   runs={runs}
                   activeRun={activeRun}
@@ -285,16 +269,6 @@ export default function App() {
                   onSelect={selectRun}
                 />
               )}
-              <a
-                href={ctaUrl(SIGNUP_URL, "run_in_cloud")}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => trackCta("run_in_cloud", "topbar")}
-                className="inline-flex items-center gap-1 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-black transition-opacity hover:opacity-90"
-              >
-                Run in the cloud
-                <ArrowUpRight className="w-3 h-3" aria-hidden="true" />
-              </a>
             </div>
           </div>
         </div>
@@ -340,7 +314,6 @@ export default function App() {
                 runs={runs}
                 activeRun={activeRun}
                 onSelectRun={selectRun}
-                onVerified={() => void onPastRunsVerified()}
               />
             </div>
           ) : !run && !error ? (
@@ -536,25 +509,8 @@ function FindingsList({
   );
   if (sorted.length === 0) {
     return (
-      <div className="space-y-4">
-        <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-8 text-center text-sm text-[#888]">
-          {finished ? "No findings in this run." : "No findings yet. The pentest is still running…"}
-        </div>
-        {finished && (
-          <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
-            <p className="text-sm font-medium text-white">Stay ahead of new exposures</p>
-            <p className="mt-0.5 mb-3 text-xs text-[#666]">
-              Attack surface monitoring catches new exposures for your org over time.
-            </p>
-            <ProInlineCta
-              label="Attack surface monitoring"
-              desc="Continuous coverage for your whole org."
-              slug="asm"
-              surface="empty_state"
-              icon={Radar}
-            />
-          </div>
-        )}
+      <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-8 text-center text-sm text-[#888]">
+        {finished ? "No findings in this run." : "No findings yet. The pentest is still running…"}
       </div>
     );
   }
@@ -761,21 +717,6 @@ function AgentsTab({ run, canSteer }: { run: LoadedRun; canSteer: boolean }) {
 
       {/* Live steering: only in-process while the scan runs. Otherwise omitted. */}
       {steerable && <ScanPromptComposer agents={agents} />}
-
-      {/* Re-run always routes to Strix Cloud. */}
-      <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
-        <p className="text-sm font-semibold text-white">Run this pentest with more depth</p>
-        <p className="mt-0.5 text-xs text-[#666]">Re-run this pentest on managed infra in the cloud.</p>
-        <div className="mt-3 flex flex-wrap gap-2.5">
-          <ProInlineCta
-            label="Re-run in Strix Pro with more depth"
-            desc="Run this pentest on managed infra with more depth."
-            slug="live_scan"
-            surface="agents"
-            icon={Rocket}
-          />
-        </div>
-      </div>
 
       <AgentDetailModal
         open={selectedAgent !== null}

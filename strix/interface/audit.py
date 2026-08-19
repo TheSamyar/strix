@@ -7,26 +7,64 @@ import json
 import shutil
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 from strix.audit import (
     AGENT_HINTS,
     SCAN_MODES,
     SITE_PROFILES,
+    AuditAuth,
+    AuditJob,
     _interrupted,
     _kill_live_processes,
     audit_exit_code,
     auth_from_args,
     detect_site_profile,
     jobs_for_mode,
+    jobs_for_profiles,
     missing_recommended_tools,
     resolve_agent,
     run_jobs,
     targets_info_for_audit,
     web_target_urls,
 )
-from strix.core.paths import run_dir_for
+from strix.core.paths import run_dir_for, runtime_state_dir
+from strix.harvest import run_harvest, targets_from_hosts, walk_coverage
 from strix.interface.utils import generate_run_name
 from strix.report.writer import write_run_record
+from strix.tools.attack_surface.tools import hydrate_attack_surface_from_disk
+
+
+def _harvest_and_jobs(
+    seed_urls: list[str],
+    targets_info: list[dict[str, object]],
+    parent: Path,
+    args: argparse.Namespace,
+    auth: AuditAuth,
+    seed_profile: str,
+) -> tuple[list[dict[str, object]], tuple[AuditJob, ...]]:
+    state_dir = runtime_state_dir(parent)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    hydrate_attack_surface_from_disk(state_dir)
+    harvest = run_harvest(seed_urls, parent)
+    live_hosts = [host for host in harvest.hosts if host.live]
+    jobs = jobs_for_mode(args.scan_mode, site_profile=seed_profile)
+    if not live_hosts:
+        return targets_info, jobs
+    targets_info = targets_from_hosts(harvest.hosts, targets_info)
+    seed_hosts = {urlparse(url).hostname for url in seed_urls}
+    extra = [host for host in live_hosts if host.hostname not in seed_hosts]
+    if extra and args.site_profile == "auto":
+        profiles: list[str] = []
+        seen: set[str] = set()
+        for host in live_hosts:
+            detected = detect_site_profile([host.url], "auto", auth=auth)
+            if detected.resolved not in seen:
+                seen.add(detected.resolved)
+                profiles.append(detected.resolved)
+        if len(profiles) > 1:
+            jobs = jobs_for_profiles(args.scan_mode, tuple(profiles))
+    return targets_info, jobs
 
 
 def parse_audit_args(argv: list[str]) -> argparse.Namespace:
@@ -113,9 +151,20 @@ def run_audit(argv: list[str]) -> int:
             f"{profile_detection.resolved}: {', '.join(missing_tools)}. "
             "Continuing; coverage may be reduced.\n"
         )
+    seed_urls = web_target_urls(targets_info)
+    jobs = jobs_for_mode(args.scan_mode, site_profile=profile_detection.resolved)
+    if seed_urls:
+        targets_info, jobs = _harvest_and_jobs(
+            seed_urls,
+            targets_info,
+            parent,
+            args,
+            auth,
+            profile_detection.resolved,
+        )
     try:
         results, finding_count = run_jobs(
-            jobs_for_mode(args.scan_mode, site_profile=profile_detection.resolved),
+            jobs,
             agent=agent,
             binary=binary,
             targets_info=targets_info,
@@ -149,4 +198,8 @@ def run_audit(argv: list[str]) -> int:
             "finding_count": finding_count,
         },
     )
-    return audit_exit_code(results, finding_count)
+    return audit_exit_code(
+        results,
+        finding_count,
+        walk_incomplete=bool(walk_coverage(parent)["incomplete"]),
+    )

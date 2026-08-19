@@ -75,7 +75,7 @@ def test_deep_extends_standard() -> None:
 
 
 def test_site_profile_choices_are_public_cli_values() -> None:
-    assert SITE_PROFILES == ("auto", "generic", "nextjs", "wordpress")
+    assert SITE_PROFILES == ("auto", "generic", "nextjs", "wordpress", "fastapi")
 
 
 def test_unknown_mode_raises() -> None:

@@ -47,9 +47,18 @@ ScopeAction = Literal["get", "list", "create", "update", "delete"]
 _CAIDO_CALL_LOCK = asyncio.Lock()
 
 
-def _ctx_client(ctx: RunContextWrapper) -> Client | None:
+async def _ctx_client(ctx: RunContextWrapper) -> Client | None:
     inner = ctx.context if isinstance(ctx.context, dict) else {}
-    return inner.get("caido_client")
+    client = inner.get("caido_client")
+    if client is not None:
+        return client
+    # ponytail: no client on the context (e.g. `strix mcp` stdio mode) — fall
+    # back to the shared self-connecting client so the host just needs caido-cli
+    # reachable at STRIX_CAIDO_URL. Returns None if nothing is listening.
+    try:
+        return await caido_api.get_client()
+    except Exception:  # noqa: BLE001
+        return None
 
 
 async def _call[T](client: Client, fn: Callable[[Client], Awaitable[T]]) -> T:
@@ -82,7 +91,13 @@ def _to_tool_json(value: Any) -> Any:
 
 def _no_client() -> str:
     return json.dumps(
-        {"success": False, "error": "Caido client not available in run context"},
+        {
+            "success": False,
+            "error": (
+                "Caido proxy not reachable. Start caido-cli and expose it at "
+                "STRIX_CAIDO_URL (default http://127.0.0.1:48080), then retry."
+            ),
+        },
         ensure_ascii=False,
         default=str,
     )
@@ -155,7 +170,7 @@ async def list_requests(
         sort_order: ``asc`` or ``desc``.
         scope_id: Restrict to a Caido scope (managed via ``scope_rules``).
     """
-    client = _ctx_client(ctx)
+    client = await _ctx_client(ctx)
     if client is None:
         return _no_client()
 
@@ -261,7 +276,7 @@ async def view_request(
         page: 1-indexed page number (only when no ``search_pattern``).
         page_size: Lines per page.
     """
-    client = _ctx_client(ctx)
+    client = await _ctx_client(ctx)
     if client is None:
         return _no_client()
 
@@ -379,7 +394,7 @@ async def repeat_request(
             - ``body`` — replace the body string entirely.
             - ``cookies`` — dict of cookies to add/update.
     """
-    client = _ctx_client(ctx)
+    client = await _ctx_client(ctx)
     if client is None:
         return _no_client()
     mods = modifications or {}
@@ -461,7 +476,7 @@ async def list_sitemap(
             (recursive subtree). Only meaningful with ``parent_id``.
         page: 1-indexed page (30 entries per page).
     """
-    client = _ctx_client(ctx)
+    client = await _ctx_client(ctx)
     if client is None:
         return _no_client()
     try:
@@ -495,7 +510,7 @@ async def view_sitemap_entry(
     Args:
         entry_id: ID from ``list_sitemap`` (or any nested entry).
     """
-    client = _ctx_client(ctx)
+    client = await _ctx_client(ctx)
     if client is None:
         return _no_client()
     try:
@@ -554,7 +569,7 @@ async def scope_rules(
         scope_id: Required for ``get`` / ``update`` / ``delete``.
         scope_name: Required for ``create`` / ``update``.
     """
-    client = _ctx_client(ctx)
+    client = await _ctx_client(ctx)
     if client is None:
         return _no_client()
 

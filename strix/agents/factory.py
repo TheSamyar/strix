@@ -25,6 +25,7 @@ from strix.tools.agents_graph.tools import (
     view_agent_graph,
     wait_for_agents,
 )
+from strix.tools.dep_confusion.tools import check_dependency_confusion
 from strix.tools.finish.tool import finish_scan
 from strix.tools.load_skill.tool import load_skill
 from strix.tools.notes.tools import (
@@ -60,6 +61,7 @@ from strix.tools.todo.tools import (
     update_todo,
 )
 from strix.tools.web_search.tool import web_search
+from strix.tools.ws_probe.tools import ws_probe
 
 
 if TYPE_CHECKING:
@@ -499,6 +501,8 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     update_note,
     delete_note,
     web_search,
+    check_dependency_confusion,
+    ws_probe,
     create_vulnerability_report,
     create_dependency_report,
     list_reports,

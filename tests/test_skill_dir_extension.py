@@ -170,6 +170,14 @@ def test_system_prompt_renders_skill_descriptions() -> None:
     assert "- technologies/firebase: Firebase security testing covering" in prompt
 
 
+def test_deep_prompt_preloads_data_leakage_skill() -> None:
+    prompt = render_system_prompt(scan_mode="deep", is_root=True)
+
+    assert "<data_leakage>" in prompt
+    assert "Deep data-leak hunting for AI/SaaS apps" in prompt
+    assert "DATA LEAK" in prompt.upper()
+
+
 def test_system_prompt_omits_empty_skill_description(tmp_path: Path) -> None:
     _write_skill(tmp_path, "extra", "widget", "---\nname: widget\ndescription:\n---\nwidget body")
     register_skill_dir(tmp_path)

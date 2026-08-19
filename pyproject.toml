@@ -229,6 +229,9 @@ ignore = [
 # Test doubles use fixture tokens/passwords and match a callee signature whose
 # args they intentionally ignore.
 "tests/test_viewer_auth.py" = ["S105", "S106", "ARG001"]
+# Fake fetcher/connector doubles match a callee signature whose args they ignore.
+"tests/test_dep_confusion.py" = ["ARG001", "ARG005"]
+"tests/test_ws_probe.py" = ["ARG001", "ARG005"]
 "tests/test_codex_auth.py" = ["S105", "S106", "SLF001"]
 # Hatchling loads the build hook by path, not as an importable package.
 "scripts/tui_sidecar_hook.py" = ["INP001"]
@@ -241,8 +244,9 @@ ignore = [
 "tests/test_stream_idle_timeout.py" = ["N802", "SLF001"]
 "tests/test_unknown_tool_recovery.py" = ["N802"]
 "tests/test_report_pdf.py" = ["S105", "S106"]
-# Sample gitleaks report embeds a fixture secret to prove redaction.
-"tests/test_gitleaks_scan.py" = ["S105", "TC002"]
+# Sample gitleaks report embeds a fixture secret to prove it is returned.
+"tests/test_gitleaks_scan.py" = ["S105", "TC002", "ARG001"]
+"tests/test_recon_chain.py" = ["ARG001", "TC002"]
 # Stdlib HTTP handler overrides (do_GET/do_POST) and lazy imports that avoid a
 # circular dependency with strix.telemetry / strix.interface.viewer.report_pdf.
 "strix/interface/viewer/server.py" = ["N802", "PLC0415"]

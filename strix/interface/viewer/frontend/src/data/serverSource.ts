@@ -172,7 +172,7 @@ async function postJson(
 export async function fetchRuns(): Promise<RunsPayload> {
   const obj = (await getJson("/api/runs")) as Partial<RunsPayload>;
   return {
-    locked: obj?.locked ?? true,
+    locked: obj?.locked ?? false,
     count: typeof obj?.count === "number" ? obj.count : 0,
     runs: Array.isArray(obj?.runs) ? (obj.runs as RunListEntry[]) : [],
   };

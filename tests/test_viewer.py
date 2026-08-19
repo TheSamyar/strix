@@ -549,49 +549,31 @@ def test_report_send_rejects_live_run(tmp_path: Path, monkeypatch: pytest.Monkey
         httpd.server_close()
 
 
-def test_historical_run_data_requires_verification(
+def test_historical_run_data_requires_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     launched = _make_run(tmp_path, "launched", status="completed", end_time="2026-01-01T00:00:00Z")
     _make_run(tmp_path, "other", status="completed", end_time="2026-01-01T00:00:00Z")
     _bundle(tmp_path, monkeypatch)
 
-    verified = {"value": False}
-    monkeypatch.setattr("strix.interface.viewer.auth.is_verified", lambda: verified["value"])
-
     httpd, url, token = serve(launched, open_browser=False)
     try:
-        # The launched run is always viewable, no verification and no cookie.
         status, _, _ = _get(f"{url}/api/run")
         assert status == 200
 
-        cookie = _session_cookie(url, token)
-
-        # A different run needs the session capability first: a cookie-less
-        # caller is forbidden even once the machine is verified.
-        verified["value"] = True
         assert _get_status(f"{url}/api/run?run=other") == 403
 
-        # With the cookie but not verified, the history gate returns 401.
-        verified["value"] = False
-        assert _get_status(f"{url}/api/run?run=other", cookie=cookie) == 401
-
-        # With both the cookie and verification, the historical run resolves.
-        verified["value"] = True
+        cookie = _session_cookie(url, token)
         assert _get_status(f"{url}/api/run?run=other", cookie=cookie) == 200
     finally:
         httpd.shutdown()
         httpd.server_close()
 
 
-def test_runs_list_requires_session_and_verification(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_runs_list_requires_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     launched = _make_run(tmp_path, "launched", status="completed", end_time="2026-01-01T00:00:00Z")
     _make_run(tmp_path, "other", status="completed", end_time="2026-01-01T00:00:00Z")
     _bundle(tmp_path, monkeypatch)
-
-    monkeypatch.setattr("strix.interface.viewer.auth.is_verified", lambda: True)
 
     def _runs(cookie: str | None) -> dict[str, object]:
         headers = {"Cookie": cookie} if cookie else {}
@@ -601,14 +583,10 @@ def test_runs_list_requires_session_and_verification(
 
     httpd, url, token = serve(launched, open_browser=False)
     try:
-        # A cookie-less caller (even with the machine verified) only sees the
-        # teaser count, never the run entries.
         payload = _runs(None)
         assert payload["locked"] is True
-        assert payload["count"] == 2
         assert payload["runs"] == []
 
-        # With the session cookie and verification, the entries unlock.
         payload = _runs(_session_cookie(url, token))
         assert payload["locked"] is False
         assert {r["name"] for r in payload["runs"]} == {"launched", "other"}  # type: ignore[attr-defined]
