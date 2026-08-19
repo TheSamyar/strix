@@ -75,6 +75,7 @@ from strix.tools.graphql_abuse.tools import graphql_abuse
 from strix.tools.graphql_deep.tools import graphql_dos, graphql_field_leak
 from strix.tools.graphql_probe.tools import graphql_introspection
 from strix.tools.harvest.tools import discover_assets, walk_unauth
+from strix.tools.header_leak.tools import header_leak
 from strix.tools.http_replay.tools import http_replay
 from strix.tools.injection_fuzz.tools import injection_fuzz
 from strix.tools.jwt_audit.tools import jwt_audit
@@ -153,6 +154,7 @@ from strix.tools.validation.tools import (
     validate_finding,
 )
 from strix.tools.web_search.tool import web_search
+from strix.tools.ws_leak.tools import ws_leak
 from strix.tools.ws_probe.tools import ws_probe
 
 
@@ -322,6 +324,8 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     error_leak_probe,
     sourcemap_recover,
     signed_url_probe,
+    header_leak,
+    ws_leak,
     oast_get_domain,
     oast_poll,
     mcp_tool_poisoning_audit,
