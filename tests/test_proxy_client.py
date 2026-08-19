@@ -254,3 +254,73 @@ def test_repeat_variant_summary_diffs_against_baseline() -> None:
 
     missing = proxy_tools._summarize_repeat_variant("x", None, base_resp)
     assert missing["success"] is False
+
+
+async def test_list_requests_inlines_bodies_when_requested(
+    monkeypatch: "pytest.MonkeyPatch",
+) -> None:
+    """include_bodies>0 inlines truncated request/response previews for the top N."""
+    import datetime as _dt
+    import json as _json
+    from types import SimpleNamespace as NS
+
+    from agents.tool_context import ToolContext
+
+    from strix.tools.proxy import caido_api
+    from strix.tools.proxy import tools as proxy_tools
+
+    now = _dt.datetime(2024, 1, 1, tzinfo=_dt.timezone.utc)
+
+    def _edge(rid: str) -> NS:
+        req = NS(
+            id=rid, host="x", port=443, method="GET", path=f"/api/{rid}",
+            query="", is_tls=True, created_at=now,
+        )
+        resp = NS(id=f"r{rid}", status_code=200, length=5, created_at=now, roundtrip_time=0)
+        return NS(cursor=f"c{rid}", node=NS(request=req, response=resp))
+
+    connection = NS(
+        edges=[_edge("1"), _edge("2"), _edge("3")],
+        page_info=NS(
+            has_next_page=False, has_previous_page=False,
+            start_cursor="c1", end_cursor="c3",
+        ),
+    )
+
+    async def _fake_call(_client: object, fn: object) -> object:
+        return await fn(_client)  # type: ignore[operator]
+
+    def _fake_list(_client: object, **_kw: object) -> object:
+        async def _inner() -> object:
+            return connection
+        return _inner()
+
+    big = b"HTTP body " * 500  # > 2k cap
+    def _fake_get(_client: object, request_id: str, part: str = "request") -> object:
+        async def _inner() -> object:
+            return NS(request=NS(raw=b"GET /api/" + request_id.encode()), response=NS(raw=big))
+        return _inner()
+
+    async def _fake_ctx_client(_ctx: object) -> str:
+        return "client"
+
+    monkeypatch.setattr(proxy_tools, "_ctx_client", _fake_ctx_client)
+    monkeypatch.setattr(proxy_tools, "_call", _fake_call)
+    monkeypatch.setattr(caido_api, "list_requests_with_client", _fake_list)
+    monkeypatch.setattr(caido_api, "get_request_with_client", _fake_get)
+
+    args = _json.dumps({"include_bodies": 2})
+    ctx = ToolContext(
+        context={"agent_id": "mcp"}, tool_name="list_requests",
+        tool_call_id="t", tool_arguments=args,
+    )
+    raw = await proxy_tools.list_requests.on_invoke_tool(ctx, args)
+    out = _json.loads(raw)
+    assert out["success"] is True
+    entries = out["entries"]
+    # first 2 have previews, truncated to cap; 3rd does not
+    assert entries[0]["request_preview"].startswith("GET /api/1")
+    assert len(entries[0]["response_preview"]) == proxy_tools._LIST_BODY_PREVIEW_CAP
+    assert "request_preview" in entries[1]
+    assert "request_preview" not in entries[2]
+    assert "response_preview" not in entries[2]

@@ -112,6 +112,10 @@ def _err(name: str, exc: Exception) -> str:
     )
 
 
+_LIST_BODY_PREVIEW_CAP = 2_000
+_LIST_MAX_INLINE_BODIES = 10
+
+
 @function_tool(timeout=120)
 async def list_requests(
     ctx: RunContextWrapper,
@@ -121,6 +125,7 @@ async def list_requests(
     sort_by: SortBy = "timestamp",
     sort_order: SortOrder = "desc",
     scope_id: str | None = None,
+    include_bodies: int = 0,
 ) -> str:
     """List captured HTTP requests from the Caido proxy with HTTPQL filtering.
 
@@ -169,10 +174,33 @@ async def list_requests(
             / ``source``.
         sort_order: ``asc`` or ``desc``.
         scope_id: Restrict to a Caido scope (managed via ``scope_rules``).
+        include_bodies: Inline truncated raw request + response previews for
+            the first N entries (max 10), so you can triage the top hits without
+            a separate ``view_request`` call each. 0 (default) = metadata only.
+            Each preview is capped at 2k chars; use ``view_request`` for the
+            full body or a regex search.
     """
     client = await _ctx_client(ctx)
     if client is None:
         return _no_client()
+
+    inline_n = max(0, min(include_bodies, _LIST_MAX_INLINE_BODIES))
+
+    async def _preview(request_id: str) -> dict[str, str] | None:
+        result = await _call(
+            client,
+            lambda client: caido_api.get_request_with_client(client, request_id, part="request"),
+        )
+        if result is None:
+            return None
+        out: dict[str, str] = {}
+        if result.request is not None and result.request.raw is not None:
+            req_txt = result.request.raw.decode("utf-8", errors="replace")
+            out["request_preview"] = req_txt[:_LIST_BODY_PREVIEW_CAP]
+        if result.response is not None and result.response.raw is not None:
+            resp_txt = result.response.raw.decode("utf-8", errors="replace")
+            out["response_preview"] = resp_txt[:_LIST_BODY_PREVIEW_CAP]
+        return out or None
 
     try:
         connection = await _call(
@@ -189,7 +217,7 @@ async def list_requests(
         )
 
         entries = []
-        for edge in connection.edges:
+        for idx, edge in enumerate(connection.edges):
             req = edge.node.request
             resp = edge.node.response
             response_payload: dict[str, Any] | None = None
@@ -207,22 +235,25 @@ async def list_requests(
                 # tokens reading a zero field on every entry.
                 if resp.roundtrip_time:
                     response_payload["roundtrip_ms"] = resp.roundtrip_time
-            entries.append(
-                {
-                    "cursor": edge.cursor,
-                    "request": {
-                        "id": req.id,
-                        "host": req.host,
-                        "port": req.port,
-                        "method": req.method,
-                        "path": req.path,
-                        "query": req.query,
-                        "is_tls": req.is_tls,
-                        "created_at": req.created_at.isoformat(),
-                    },
-                    "response": response_payload,
+            entry: dict[str, Any] = {
+                "cursor": edge.cursor,
+                "request": {
+                    "id": req.id,
+                    "host": req.host,
+                    "port": req.port,
+                    "method": req.method,
+                    "path": req.path,
+                    "query": req.query,
+                    "is_tls": req.is_tls,
+                    "created_at": req.created_at.isoformat(),
                 },
-            )
+                "response": response_payload,
+            }
+            if idx < inline_n:
+                preview = await _preview(req.id)
+                if preview:
+                    entry.update(preview)
+            entries.append(entry)
 
         return json.dumps(
             {
