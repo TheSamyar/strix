@@ -70,6 +70,7 @@ def test_tools_list_includes_skill_and_report_tools() -> None:
         "get_report",
         "executive_summary",
     } <= names
+    assert {"authz_probe", "dedupe_reports", "retest_findings"} <= names
     assert "create_agent" not in names
     assert "finish_scan" not in names
 

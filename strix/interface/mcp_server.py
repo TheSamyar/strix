@@ -48,6 +48,7 @@ from strix.tools.credentials.tools import (
     store_credential,
 )
 from strix.tools.cve_lookup.tools import cve_lookup
+from strix.tools.dedupe.tools import dedupe_reports
 from strix.tools.dep_confusion.tools import check_dependency_confusion
 from strix.tools.diff_response.tools import diff_response
 from strix.tools.git_recon.tools import git_recon
@@ -101,7 +102,11 @@ from strix.tools.todo.tools import (
     seed_todos,
     update_todo,
 )
-from strix.tools.validation.tools import hydrate_validations_from_disk, validate_finding
+from strix.tools.validation.tools import (
+    hydrate_validations_from_disk,
+    retest_findings,
+    validate_finding,
+)
 from strix.tools.web_search.tool import web_search
 from strix.tools.ws_probe.tools import ws_probe
 
@@ -165,7 +170,9 @@ known-CVE dependencies. Track scope, hypotheses, and progress with the notes \
 and todo tools.
 
 6. DON'T DECLARE DONE — call coverage_report again. If walk.incomplete or the \
-coverage checklist still has untested classes, keep going."""
+coverage checklist still has untested classes, keep going. When finished, call \
+dedupe_reports to merge duplicate findings; after a fix cycle, call \
+retest_findings to prove which findings are now closed."""
 
 SPECIALIST_MCP_INSTRUCTIONS = """\
 You are a specialist on a Strix audit. Drive testing with your own shell, \
@@ -187,6 +194,7 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     list_reports,
     get_report,
     executive_summary,
+    dedupe_reports,
     create_note,
     list_notes,
     get_note,
@@ -211,6 +219,7 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     http_replay,
     authz_probe,
     validate_finding,
+    retest_findings,
     diff_response,
     store_credential,
     list_credentials,

@@ -326,6 +326,49 @@ class ReportState:
     def get_existing_vulnerabilities(self) -> list[dict[str, Any]]:
         return list(self.vulnerability_reports)
 
+    @staticmethod
+    def _dedupe_key(report: dict[str, Any]) -> tuple[str, str, str, str]:
+        """Two reports collide when they're the same bug on the same request.
+        CWE is the class discriminator (finding_class defaults to "dynamic" for
+        every dynamic finding, so it can't tell two bug classes apart); fall
+        back to the title when no CWE is set."""
+        klass = report.get("cwe") or report.get("title", "")
+        return (
+            str(klass).strip().lower(),
+            str(report.get("endpoint") or "").strip().lower(),
+            str(report.get("method") or "").strip().upper(),
+            str(report.get("target") or "").strip().lower(),
+        )
+
+    def dedupe_vulnerability_reports(self) -> dict[str, Any]:
+        """Merge duplicate findings (same class + endpoint + method + target),
+        keeping the first of each group and recording how many it absorbed.
+        Rewrites disk (json/csv/sarif) and drops orphaned per-finding .md files."""
+        kept: list[dict[str, Any]] = []
+        removed_ids: list[str] = []
+        first_by_key: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        for report in self.vulnerability_reports:
+            key = self._dedupe_key(report)
+            primary = first_by_key.get(key)
+            if primary is None:
+                first_by_key[key] = report
+                kept.append(report)
+            else:
+                removed_ids.append(report["id"])
+                primary["duplicates_merged"] = int(primary.get("duplicates_merged", 0)) + 1
+        if removed_ids:
+            self.vulnerability_reports = kept
+            self._saved_vuln_ids &= {r["id"] for r in kept}
+            vuln_dir = self.get_run_dir() / "vulnerabilities"
+            for rid in removed_ids:
+                (vuln_dir / f"{rid}.md").unlink(missing_ok=True)
+            self.save_run_data()
+        return {
+            "removed_count": len(removed_ids),
+            "removed_ids": removed_ids,
+            "kept_count": len(kept),
+        }
+
     def record_sdk_usage(
         self,
         *,

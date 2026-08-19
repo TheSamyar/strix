@@ -21,6 +21,7 @@ from typing import Any
 
 from agents import RunContextWrapper, function_tool
 
+from strix.tools.credentials.tools import _get_credential_impl
 from strix.tools.http_replay.tools import _replay_impl
 
 
@@ -165,8 +166,7 @@ def _validate_impl(  # noqa: PLR0911, PLR0912
         return {
             "validated": False,
             "error": (
-                f"invalid claim_type {claim_type!r}; "
-                f"must be one of {list(_VALID_CLAIM_TYPES)}"
+                f"invalid claim_type {claim_type!r}; must be one of {list(_VALID_CLAIM_TYPES)}"
             ),
         }
 
@@ -192,8 +192,7 @@ def _validate_impl(  # noqa: PLR0911, PLR0912
         }
 
     replays = [
-        _replay_impl(method, url, headers, body, timeout, allow_redirects)
-        for _ in range(_REPLAYS)
+        _replay_impl(method, url, headers, body, timeout, allow_redirects) for _ in range(_REPLAYS)
     ]
     for resp in replays:
         if not resp.get("success"):
@@ -217,9 +216,7 @@ def _validate_impl(  # noqa: PLR0911, PLR0912
     unauthorized_confirmed = False
     baseline_public = False
     if baseline_configured:
-        baseline = _replay_impl(
-            method, url, baseline_headers, body, timeout, allow_redirects
-        )
+        baseline = _replay_impl(method, url, baseline_headers, body, timeout, allow_redirects)
         if not baseline.get("success"):
             return {
                 "validated": False,
@@ -336,6 +333,81 @@ async def validate_finding(
             baseline_headers=baseline_headers,
             baseline_no_auth=baseline_no_auth,
         ),
+        ensure_ascii=False,
+        default=str,
+    )
+
+
+def _retest_findings_impl(
+    headers: dict[str, str] | None, credential_label: str | None
+) -> dict[str, Any]:
+    """Replay every validated finding's exploit and report still-open vs fixed.
+
+    Uses each validation record's stored url + proof_excerpt as the signal.
+    Records store no auth headers, so the caller supplies current auth
+    (headers or a stored credential) — otherwise an authed endpoint would
+    401 and look falsely fixed."""
+    hdrs = dict(headers or {})
+    if credential_label:
+        cred = _get_credential_impl(credential_label)
+        if not cred.get("success"):
+            return {"success": False, "error": f"credential '{credential_label}' not found"}
+        hdrs.setdefault("Authorization", cred.get("value") or "")
+
+    with _validations_lock:
+        records = [dict(r) for r in _validations_storage.values() if r.get("validated")]
+
+    results: list[dict[str, Any]] = []
+    counts = {"still_open": 0, "fixed": 0, "inconclusive": 0}
+    for rec in records:
+        url = rec.get("url")
+        proof = rec.get("proof_excerpt")
+        entry: dict[str, Any] = {"validation_id": rec.get("id"), "url": url}
+        if not url or not proof:
+            entry["status"] = "inconclusive"
+            entry["reason"] = "no replayable url + proof signal stored"
+        else:
+            resp = _replay_impl(
+                str(rec.get("method") or "GET"), url, hdrs or None, None, 15, allow_redirects=False
+            )
+            if not resp.get("success"):
+                entry["status"] = "inconclusive"
+                entry["reason"] = f"replay failed: {resp.get('error')}"
+            else:
+                still_open = _content_match(resp.get("body") or "", str(proof), None)
+                entry["status"] = "still_open" if still_open else "fixed"
+                entry["http_status"] = resp.get("status_code")
+        counts[entry["status"]] += 1
+        results.append(entry)
+    return {"success": True, "retested": len(results), **counts, "results": results}
+
+
+@function_tool(timeout=300, strict_mode=False)
+async def retest_findings(
+    ctx: RunContextWrapper,
+    headers: dict[str, str] | None = None,
+    credential_label: str | None = None,
+) -> str:
+    """Re-run every validated finding's exploit and report which are still open.
+
+    For each validated finding, replays its stored exploit URL and checks
+    whether the proven signal (``proof_excerpt``) still appears — marking it
+    ``still_open`` or ``fixed``. Findings without a replayable url + proof are
+    ``inconclusive`` (retest by hand). Because validation records don't store
+    auth, pass current credentials so authed endpoints don't 401 and look
+    falsely fixed. Only test authorized targets.
+
+    Returns JSON with ``retested``, ``still_open``, ``fixed``, ``inconclusive``,
+    and a per-finding ``results`` list.
+
+    Args:
+        headers: Headers applied to every replay (e.g. a fresh session cookie).
+        credential_label: A ``store_credential`` label whose value is sent as
+            ``Authorization`` on every replay (unless ``headers`` already sets it).
+    """
+    del ctx
+    return json.dumps(
+        await asyncio.to_thread(_retest_findings_impl, headers, credential_label),
         ensure_ascii=False,
         default=str,
     )
