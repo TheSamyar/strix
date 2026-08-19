@@ -135,6 +135,7 @@ from strix.tools.session_fixation.tools import reset_token_probe, session_fixati
 from strix.tools.signed_url.tools import signed_url_probe
 from strix.tools.sourcemap.tools import sourcemap_recover
 from strix.tools.ssr_leak.tools import ssr_leak_scan
+from strix.tools.ssrf_probe.tools import ssrf_probe
 from strix.tools.storage_probe.tools import storage_probe
 from strix.tools.stored_probe.tools import stored_probe
 from strix.tools.subdomain_takeover.tools import subdomain_takeover
@@ -291,6 +292,7 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     authz_matrix,
     stored_probe,
     injection_fuzz,
+    ssrf_probe,
     deep_fuzz,
     param_discover,
     content_discover,

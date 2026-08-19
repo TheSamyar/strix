@@ -88,6 +88,13 @@ def _surface_gaps(ran: set[str] | None) -> list[str]:
     )
     has_params = any(e.get("params") for e in endpoints)
     has_auth_gated = any(e.get("auth_required") for e in endpoints)
+    _ssrf_names = {
+        "url", "uri", "link", "src", "image", "img", "file", "path", "dest",
+        "redirect", "next", "target", "webhook", "callback", "feed", "proxy", "host",
+    }
+    has_ssrf_param = any(
+        str(p).lower() in _ssrf_names for e in endpoints for p in (e.get("params") or [])
+    )
     roles = int(matrix.get("roles", 0))
 
     if roles >= 2 and not ({"authz_probe", "authz_matrix"} & ran):
@@ -103,6 +110,11 @@ def _surface_gaps(ran: set[str] | None) -> list[str]:
         gaps.append("upload/file endpoint mapped but upload_probe never ran")
     if has_params and not ({"injection_fuzz", "deep_fuzz"} & ran):
         gaps.append("endpoints with params mapped but no injection_fuzz/deep_fuzz on them")
+    if has_ssrf_param and "ssrf_probe" not in ran:
+        gaps.append(
+            "SSRF-prone param (url/redirect/webhook/…) mapped but ssrf_probe never "
+            "ran — deep-test for metadata/internal/file:// SSRF"
+        )
     if has_auth_gated and not ({"authz_probe", "walk_unauth"} & ran):
         gaps.append("auth-gated endpoints mapped but broken-access-control never tested")
     if endpoints and "stored_probe" not in ran:
