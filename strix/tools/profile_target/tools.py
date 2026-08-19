@@ -13,7 +13,7 @@ import base64
 import json
 import re
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from agents import RunContextWrapper, function_tool
 
@@ -21,9 +21,19 @@ from strix.tools.http_replay.tools import _replay_impl
 
 
 _MAX_BUNDLES = 10
+_MAX_ENDPOINTS = 60
 _SCRIPT_SRC_RE = re.compile(r"""<script[^>]+src=["']([^"']+)["']""", re.IGNORECASE)
 _SUPABASE_URL_RE = re.compile(r"https://[a-z0-9]{16,}\.supabase\.co")
 _JWT_RE = re.compile(r"eyJ[A-Za-z0-9_\-]{6,}\.[A-Za-z0-9_\-]{6,}\.[A-Za-z0-9_\-]{6,}")
+
+# API-ish paths worth handing straight to plan_tests / injection_fuzz without a
+# separate discovery pass. Matches quoted route/URL literals in page + bundles.
+_ENDPOINT_MARKER = re.compile(
+    r"(?:/graphql|/api/|/rest/|/v[0-9]+/|/oauth/|/auth/|/admin/|/internal/|/webhook)",
+    re.IGNORECASE,
+)
+_QUOTED_PATH_RE = re.compile(r"""["'`](/[A-Za-z0-9_\-./:{}$]{2,120})["'`]""")
+_ABS_URL_RE = re.compile(r"""["'`](https?://[A-Za-z0-9_\-./:%]{6,160})["'`]""")
 
 # category -> label -> list of ("header"|"body", needle). Header needles match
 # "name: value" case-insensitively; body needles match page + bundle text.
@@ -115,6 +125,29 @@ def _extract_supabase(body: str) -> tuple[str | None, str | None]:
     return (url_match.group(0) if url_match else None), anon
 
 
+def _extract_endpoints(body: str, final_url: str) -> list[str]:
+    """Pull API-ish routes/URLs already visible in the page + bundle text.
+
+    Passive extraction from bytes profile_target already downloaded — candidate
+    endpoints, not confirmed live. Saves a separate discovery/sourcemap pass for
+    the obvious surface at intake.
+    """
+
+    host = urlsplit(final_url).netloc
+    found: set[str] = set()
+    for m in _QUOTED_PATH_RE.findall(body):
+        if _ENDPOINT_MARKER.search(m):
+            found.add(m)
+    for m in _ABS_URL_RE.findall(body):
+        # keep only same-host absolute URLs that look like API routes
+        if _ENDPOINT_MARKER.search(m) and (not host or host in m):
+            found.add(m)
+    # /graphql alone is high-signal even without a trailing slash
+    if "/graphql" in body.lower():
+        found.add("/graphql")
+    return sorted(found)[:_MAX_ENDPOINTS]
+
+
 def _profile_target_impl(url: str, timeout: int) -> dict[str, Any]:
     if not url or not url.strip():
         return {"success": False, "error": "url cannot be empty"}
@@ -154,6 +187,7 @@ def _profile_target_impl(url: str, timeout: int) -> dict[str, Any]:
         **profile,
         "supabase_url": supabase_url,
         "supabase_anon_key": supabase_anon,
+        "endpoints": _extract_endpoints(body, final_url),
         "evidence": evidence,
     }
 
@@ -168,7 +202,14 @@ async def profile_target(ctx: RunContextWrapper, url: str, timeout: int = 20) ->
     and ``cms``. Extracts ``supabase_url`` + ``supabase_anon_key`` when present so
     ``backend_rules_probe`` can run right away. Pass the result to ``plan_tests``.
 
-    Returns JSON with each category, an ``evidence`` map, and the Supabase creds.
+    Also returns ``endpoints`` — API-ish routes/URLs (``/api/…``, ``/graphql``,
+    ``/v1/…``, ``/oauth/…``, same-host absolute URLs) passively extracted from
+    the page + bundles it already downloaded, so you can hand the obvious attack
+    surface straight to ``plan_tests``/``injection_fuzz`` without a separate
+    discovery pass. They are candidates, not confirmed live — verify before use.
+
+    Returns JSON with each category, ``endpoints``, an ``evidence`` map, and the
+    Supabase creds.
 
     Args:
         url: The target URL to fingerprint.

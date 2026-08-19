@@ -121,3 +121,29 @@ def test_risk_rank_accepts_plain_strings() -> None:
 
 def test_risk_rank_empty_rejected() -> None:
     assert _endpoint_risk_rank_impl([])["success"] is False
+
+
+def test_profile_extracts_endpoints_from_page_and_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
+    html = '<html><script src="/app.js"></script></html>'
+    bundle = (
+        'fetch("/api/users/1");axios.post("/api/orders");const g="/graphql";'
+        'u="https://x/api/admin";ext="https://evil.com/api/steal";'
+        'css="/assets/main.css";page="/about";'
+    )
+
+    def _fake(method: str, url: str, *a: Any, **k: Any) -> dict[str, Any]:
+        if url.endswith("app.js"):
+            return _resp(body=bundle)
+        return _resp(body=html, final_url="https://x/")
+
+    monkeypatch.setattr(profiler, "_replay_impl", _fake)
+    out = profiler._profile_target_impl("https://x/", 10)
+    eps = out["endpoints"]
+    assert "/api/users/1" in eps
+    assert "/api/orders" in eps
+    assert "/graphql" in eps
+    assert "https://x/api/admin" in eps
+    # noise + cross-host excluded
+    assert "/assets/main.css" not in eps
+    assert "/about" not in eps
+    assert "https://evil.com/api/steal" not in eps
