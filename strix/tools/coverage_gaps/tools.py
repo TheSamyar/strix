@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import Any
+from urllib.parse import urlsplit
 
 from agents import RunContextWrapper, function_tool
 
@@ -83,18 +84,45 @@ def _surface_gaps(ran: set[str] | None) -> list[str]:
         return []
 
     gaps: list[str] = []
-    blob = " ".join(
-        f"{e.get('path', '')} {e.get('notes', '')}".lower() for e in endpoints
-    )
+    blob = " ".join(f"{e.get('path', '')} {e.get('notes', '')}".lower() for e in endpoints)
     has_params = any(e.get("params") for e in endpoints)
     has_auth_gated = any(e.get("auth_required") for e in endpoints)
     _ssrf_names = {
-        "url", "uri", "link", "src", "image", "img", "file", "path", "dest",
-        "redirect", "next", "target", "webhook", "callback", "feed", "proxy", "host",
+        "url",
+        "uri",
+        "link",
+        "src",
+        "image",
+        "img",
+        "file",
+        "path",
+        "dest",
+        "redirect",
+        "next",
+        "target",
+        "webhook",
+        "callback",
+        "feed",
+        "proxy",
+        "host",
     }
     _lfi_names = {
-        "file", "path", "page", "template", "include", "doc", "download", "filename",
-        "dir", "folder", "view", "lang", "locale", "load", "read", "src",
+        "file",
+        "path",
+        "page",
+        "template",
+        "include",
+        "doc",
+        "download",
+        "filename",
+        "dir",
+        "folder",
+        "view",
+        "lang",
+        "locale",
+        "load",
+        "read",
+        "src",
     }
     params_lower = {str(p).lower() for e in endpoints for p in (e.get("params") or [])}
     has_ssrf_param = bool(params_lower & _ssrf_names)
@@ -137,6 +165,118 @@ def _surface_gaps(ran: set[str] | None) -> list[str]:
     return gaps
 
 
+def _norm_path(raw: str) -> str:
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    if "://" in text or text.startswith("//"):
+        split = urlsplit(text if "://" in text else f"http:{text}")
+        text = split.path or "/"
+    else:
+        text = text.split("?", 1)[0].split("#", 1)[0]
+        method, _, rest = text.partition(" ")
+        if rest.startswith("/") and method.isalpha() and method.isupper():
+            text = rest
+    if not text.startswith("/"):
+        text = "/" + text
+    text = text.casefold()
+    if len(text) > 1:
+        text = text.rstrip("/")
+    return text or "/"
+
+
+def _is_param_seg(seg: str) -> bool:
+    return (seg.startswith("{") and seg.endswith("}") and len(seg) > 2) or (
+        seg.startswith(":") and len(seg) > 1
+    )
+
+
+def _path_covers(observed: str, mapped: str) -> bool:
+    # prefix at a slash, or {param}/:param as one segment (finding /users/2 covers /users/{id})
+    obs, mapped_n = _norm_path(observed), _norm_path(mapped)
+    if not obs or not mapped_n:
+        return False
+    if obs == mapped_n:
+        return True
+    if (
+        obs != "/"
+        and mapped_n != "/"
+        and (obs.startswith(mapped_n + "/") or mapped_n.startswith(obs + "/"))
+    ):
+        return True
+    left = [s for s in obs.split("/") if s]
+    right = [s for s in mapped_n.split("/") if s]
+    if len(left) != len(right):
+        return False
+    return all(
+        a == b or _is_param_seg(a) or _is_param_seg(b) for a, b in zip(left, right, strict=True)
+    )
+
+
+def _mapped_paths() -> list[str]:
+    try:
+        endpoints = _list_attack_surface_impl().get("endpoints") or []
+    except Exception:  # noqa: BLE001 — critic must never break a run
+        return []
+    paths: list[str] = []
+    for item in endpoints:
+        path = item.get("path") or item.get("url") or ""
+        if path:
+            paths.append(str(path))
+    return paths
+
+
+def _walk_observed_paths(state: Any) -> list[str]:
+    if state is None:
+        return []
+    path = state.get_run_dir() / "walk.jsonl"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    found: list[str] = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        url = row.get("url")
+        if url:
+            found.append(str(url))
+        eid = row.get("endpoint_id")
+        if eid:
+            parts = str(eid).split(" ", 1)
+            found.append(parts[-1])
+    return found
+
+
+def _observed_cover_paths(state: Any) -> list[str]:
+    observed: list[str] = []
+    if state is not None:
+        for vuln in state.get_existing_vulnerabilities():
+            for key in ("endpoint", "target"):
+                val = vuln.get(key)
+                if val:
+                    observed.append(str(val))
+    observed.extend(_walk_observed_paths(state))
+    return observed
+
+
+def _endpoint_coverage(state: Any) -> tuple[int, list[str], int, float]:
+    mapped = _mapped_paths()
+    n = len(mapped)
+    if n == 0:
+        return 0, [], 0, 1.0
+    observed = _observed_cover_paths(state)
+    untested = [p for p in mapped if not any(_path_covers(o, p) for o in observed)]
+    ratio = (n - len(untested)) / n
+    return n, untested[:25], len(untested), ratio
+
+
 def _coverage_gaps_impl(agent_id: str) -> dict[str, Any]:
     todos = _get_agent_todos(agent_id)
     pending: dict[str, list[str]] = {"plan": [], "coverage": [], "data_leak": [], "other": []}
@@ -167,15 +307,23 @@ def _coverage_gaps_impl(agent_id: str) -> dict[str, Any]:
         unrun_count = len(missing)
 
     surface_gaps = _surface_gaps(ran)
+    mapped_n, untested_endpoints, untested_n, ratio = _endpoint_coverage(state)
 
-    # A scan is only "thorough" when the deep baseline ran AND the
-    # surface-specific deep tests the target demands were all done. Any
-    # surface gap (e.g. multi-identity mapped but authz untested) blocks
-    # "looks_thorough" — that's where the deepest bugs hide.
-    if pending_count == 0 and unrun_count <= 2 and not surface_gaps:
+    # Thoroughness is endpoint coverage, not "a tool name appeared once".
+    if (
+        pending_count == 0
+        and unrun_count <= 2
+        and not surface_gaps
+        and (mapped_n == 0 or ratio >= 0.7)
+    ):
         verdict = "looks_thorough"
         rec = "Coverage looks complete; dedupe_reports then wrap up."
-    elif pending_count > 5 or unrun_count >= 6 or len(surface_gaps) >= 2:
+    elif (
+        pending_count > 5
+        or unrun_count >= 6
+        or len(surface_gaps) >= 2
+        or (mapped_n >= 5 and ratio < 0.3)
+    ):
         verdict = "shallow"
         rec = "Many classes/tools untouched — keep testing before declaring done."
     else:
@@ -189,6 +337,10 @@ def _coverage_gaps_impl(agent_id: str) -> dict[str, Any]:
         "pending_by_type": pending,
         "key_tools_not_run": key_tools_not_run,
         "surface_gaps": surface_gaps,
+        "mapped_endpoint_count": mapped_n,
+        "untested_endpoints": untested_endpoints,
+        "untested_endpoint_count": untested_n,
+        "endpoint_coverage_ratio": ratio,
         "thoroughness": verdict,
         "recommendation": rec,
     }
@@ -209,8 +361,9 @@ async def coverage_gaps(ctx: RunContextWrapper) -> str:
     Any surface gap blocks a ``looks_thorough`` verdict.
 
     Returns JSON with ``pending_by_type``, ``key_tools_not_run``,
-    ``surface_gaps``, ``findings_filed``, ``thoroughness``, and a
-    ``recommendation``.
+    ``surface_gaps``, ``findings_filed``, ``mapped_endpoint_count``,
+    ``untested_endpoints`` (capped at 25), ``untested_endpoint_count``,
+    ``endpoint_coverage_ratio``, ``thoroughness``, and a ``recommendation``.
     """
     agent_id = "mcp"
     if isinstance(ctx.context, dict):

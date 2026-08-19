@@ -9,7 +9,8 @@ import pytest
 
 import strix.report.state as report_state_mod
 from strix.report.state import ReportState
-from strix.tools.coverage_gaps.tools import _coverage_gaps_impl
+from strix.tools.attack_surface import tools as asf
+from strix.tools.coverage_gaps.tools import _coverage_gaps_impl, _surface_gaps
 from strix.tools.graphql_abuse import tools as gqla
 from strix.tools.todo.tools import _get_agent_todos, seed_todos
 
@@ -76,14 +77,22 @@ def test_locked_down_graphql_not_flagged(monkeypatch: pytest.MonkeyPatch) -> Non
 # ---- coverage_gaps -------------------------------------------------------
 
 
+def _reset_surface() -> None:
+    asf._store["endpoints"].clear()
+    asf._store["roles"].clear()
+    asf._store["matrix"].clear()
+
+
 @pytest.fixture
 def run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[ReportState]:
     monkeypatch.chdir(tmp_path)
     report_state_mod._global_report_state = None
+    _reset_surface()
     state = ReportState(run_name="gaps-test")
     report_state_mod.set_global_report_state(state)
     yield state
     report_state_mod._global_report_state = None
+    _reset_surface()
 
 
 def test_gaps_shallow_when_todos_pending(run: ReportState) -> None:
@@ -94,24 +103,17 @@ def test_gaps_shallow_when_todos_pending(run: ReportState) -> None:
 
 
 def test_gaps_thorough_when_clear(run: ReportState) -> None:
-    # no todos pending; no audit log → unrun_count 0 (unknown), verdict thorough
+    # no todos pending; no audit log → unrun_count 0 (unknown); empty mapped
+    # must still be allowed to look_thorough
     out = _coverage_gaps_impl("empty-agent")
     assert _get_agent_todos("empty-agent") == {}
     assert out["thoroughness"] == "looks_thorough"
-
-
-def _reset_surface() -> None:
-    from strix.tools.attack_surface import tools as asf
-
-    asf._store["endpoints"].clear()
-    asf._store["roles"].clear()
-    asf._store["matrix"].clear()
+    assert out["mapped_endpoint_count"] == 0
+    assert out["endpoint_coverage_ratio"] == 1.0
+    assert out["untested_endpoint_count"] == 0
 
 
 def test_surface_gaps_flag_untested_deep_classes() -> None:
-    from strix.tools.attack_surface import tools as asf
-    from strix.tools.coverage_gaps.tools import _surface_gaps
-
     _reset_surface()
     asf._record_endpoint_impl("/graphql", "POST", params=["query"], auth_required=True)
     asf._record_endpoint_impl(
@@ -132,14 +134,17 @@ def test_surface_gaps_flag_untested_deep_classes() -> None:
 
     # once the deep tools ran, the surface gaps clear (matrix bookkeeping optional)
     ran = {
-        "authz_probe", "graphql_abuse", "upload_probe", "injection_fuzz",
-        "stored_probe", "ssrf_probe", "lfi_probe",
+        "authz_probe",
+        "graphql_abuse",
+        "upload_probe",
+        "injection_fuzz",
+        "stored_probe",
+        "ssrf_probe",
+        "lfi_probe",
     }
     assert _surface_gaps(ran) == []
     _reset_surface()
 
 
 def test_surface_gaps_never_break_without_audit_log() -> None:
-    from strix.tools.coverage_gaps.tools import _surface_gaps
-
     assert _surface_gaps(None) == []
