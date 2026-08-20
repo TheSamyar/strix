@@ -257,11 +257,16 @@ do not redact. Use create_dependency_report for \
 known-CVE dependencies. Track scope, hypotheses, and progress with the notes \
 and todo tools.
 
-6. DON'T DECLARE DONE — call coverage_report and coverage_gaps. If \
-coverage_gaps.thoroughness is not "looks_thorough" (pending classes, or key \
-probes never run), keep going. When finished, call dedupe_reports to merge \
-duplicate findings, suggest_chains to escalate them, and after a fix cycle \
-retest_findings to prove which findings are now closed."""
+6. DON'T DECLARE DONE — this is a loop, not a final check. Call coverage_report \
+and coverage_gaps. While coverage_gaps.thoroughness is not "looks_thorough", you \
+are NOT done: clear every pending todo, run each tool in key_tools_not_run, close \
+every entry in surface_gaps, and test every endpoint in untested_high_risk \
+(these are the admin/IDOR/SSRF/upload/money routes — testing them is where the \
+real bugs are). Then call coverage_gaps again. Repeat until it returns \
+"looks_thorough" — do not stop on "in_progress" or "shallow". When finally \
+thorough, call dedupe_reports to merge duplicate findings, suggest_chains to \
+escalate them, and after a fix cycle retest_findings to prove which findings are \
+now closed."""
 
 SPECIALIST_MCP_INSTRUCTIONS = """\
 You are a specialist on a Strix audit. Drive testing with your own shell, \

@@ -18,6 +18,7 @@ from agents import RunContextWrapper, function_tool
 from strix.core.paths import runtime_state_dir
 from strix.report.state import get_global_report_state
 from strix.tools.attack_surface.tools import _auth_matrix_impl, _list_attack_surface_impl
+from strix.tools.endpoint_risk.tools import _score_endpoint
 from strix.tools.todo.tools import _get_agent_todos
 
 
@@ -66,7 +67,7 @@ def _tools_run() -> set[str] | None:
     return names
 
 
-def _surface_gaps(ran: set[str] | None) -> list[str]:
+def _surface_gaps(ran: set[str] | None) -> list[str]:  # noqa: PLR0912, PLR0915
     """Depth requirements implied by the mapped attack surface.
 
     Reads the attack-surface store (endpoints/roles/authz matrix) and returns
@@ -87,6 +88,26 @@ def _surface_gaps(ran: set[str] | None) -> list[str]:
     blob = " ".join(f"{e.get('path', '')} {e.get('notes', '')}".lower() for e in endpoints)
     has_params = any(e.get("params") for e in endpoints)
     has_auth_gated = any(e.get("auth_required") for e in endpoints)
+    _write_methods = {"POST", "PUT", "DELETE", "PATCH"}
+    write_eps = [e for e in endpoints if str(e.get("method", "GET")).upper() in _write_methods]
+    has_write = bool(write_eps)
+    has_write_params = any(e.get("params") for e in write_eps)
+    has_write_authed = any(e.get("auth_required") for e in write_eps)
+    _redirect_names = {
+        "redirect", "next", "return", "return_to", "returnto", "url", "callback",
+        "continue", "dest", "destination", "goto", "redirect_uri", "redir",
+    }
+    params_lower_all = {str(p).lower() for e in endpoints for p in (e.get("params") or [])}
+    has_redirect_param = bool(params_lower_all & _redirect_names) or any(
+        w in blob for w in ("redirect", "return_to", "callback")
+    )
+    is_ai_app = any(
+        w in blob
+        for w in (
+            "/chat", "/ai", "llm", "completion", "prompt", "assistant",
+            "/agent", "message", "conversation",
+        )
+    )
     _ssrf_names = {
         "url",
         "uri",
@@ -162,6 +183,39 @@ def _surface_gaps(ran: set[str] | None) -> list[str]:
         gaps.append("login/auth endpoint mapped but nosql_probe never ran (NoSQLi auth bypass)")
     if endpoints and "stored_probe" not in ran:
         gaps.append("second-order/stored injection (stored_probe) never attempted")
+    if has_redirect_param and "redirect_probe" not in ran:
+        gaps.append(
+            "redirect/return/callback param mapped but redirect_probe never ran "
+            "(open redirect → phishing/token theft)"
+        )
+    if has_write_authed and "csrf_probe" not in ran:
+        gaps.append(
+            "authenticated state-changing endpoints mapped but csrf_probe never ran (CSRF)"
+        )
+    if has_write_params and "mass_assignment_probe" not in ran:
+        gaps.append(
+            "write endpoints with params mapped but mass_assignment_probe never ran "
+            "(privilege/field over-posting)"
+        )
+    if is_ai_app and not ({"prompt_injection_probe", "mcp_tool_poisoning_audit"} & ran):
+        gaps.append(
+            "AI/LLM surface mapped but prompt_injection_probe/mcp_tool_poisoning_audit "
+            "never ran (direct/indirect prompt injection)"
+        )
+    if any(w in blob for w in ("oauth", "sso", "openid", "/callback", "authorize")) and (
+        "oauth_probe" not in ran
+    ):
+        gaps.append("OAuth/SSO flow mapped but oauth_probe never ran (redirect/state/code abuse)")
+    if any(w in blob for w in ("login", "signin", "sign-in", "register", "signup")) and (
+        "user_enumeration_probe" not in ran
+    ):
+        gaps.append("auth/registration endpoint mapped but user_enumeration_probe never ran")
+    _race_nouns = (
+        "balance", "wallet", "coupon", "credit", "payment",
+        "order", "vote", "transfer", "redeem",
+    )
+    if has_write and "race_probe" not in ran and any(w in blob for w in _race_nouns):
+        gaps.append("money/limited-resource write mapped but race_probe never ran (TOCTOU/race)")
     return gaps
 
 
@@ -277,6 +331,36 @@ def _endpoint_coverage(state: Any) -> tuple[int, list[str], int, float]:
     return n, untested[:25], len(untested), ratio
 
 
+# One strong signal (IDOR id, auth/admin, SSRF/traversal param) scores >= 3 in
+# endpoint_risk. Ratio-only coverage lets an agent hit 0.7 on cheap static routes
+# while skipping exactly these — so a high-risk endpoint left untested blocks
+# "looks_thorough" regardless of the ratio.
+_HIGH_RISK_SCORE = 3
+
+
+def _untested_high_risk(state: Any) -> list[dict[str, Any]]:
+    """Mapped endpoints with a strong risk signal that were never tested."""
+    try:
+        endpoints = _list_attack_surface_impl().get("endpoints") or []
+    except Exception:  # noqa: BLE001 — critic must never break a run
+        return []
+    observed = _observed_cover_paths(state)
+    risky: list[dict[str, Any]] = []
+    for ep in endpoints:
+        path = str(ep.get("path") or ep.get("url") or ep.get("endpoint") or "")
+        if not path or any(_path_covers(o, path) for o in observed):
+            continue
+        scored = _score_endpoint(
+            str(ep.get("method") or "GET"),
+            path,
+            [str(p) for p in (ep.get("params") or [])],
+        )
+        if scored["score"] >= _HIGH_RISK_SCORE:
+            risky.append(scored)
+    risky.sort(key=lambda r: r["score"], reverse=True)
+    return risky[:25]
+
+
 def _coverage_gaps_impl(agent_id: str) -> dict[str, Any]:
     todos = _get_agent_todos(agent_id)
     pending: dict[str, list[str]] = {"plan": [], "coverage": [], "data_leak": [], "other": []}
@@ -308,13 +392,17 @@ def _coverage_gaps_impl(agent_id: str) -> dict[str, Any]:
 
     surface_gaps = _surface_gaps(ran)
     mapped_n, untested_endpoints, untested_n, ratio = _endpoint_coverage(state)
+    untested_high_risk = _untested_high_risk(state)
 
-    # Thoroughness is endpoint coverage, not "a tool name appeared once".
+    # Thoroughness is endpoint coverage, not "a tool name appeared once". A
+    # high-risk endpoint left untested blocks "thorough" no matter the ratio —
+    # ratio padding on cheap routes must not hide a skipped admin/IDOR/SSRF path.
     if (
         pending_count == 0
         and unrun_count <= 2
         and not surface_gaps
-        and (mapped_n == 0 or ratio >= 0.7)
+        and not untested_high_risk
+        and (mapped_n == 0 or ratio >= 0.85)
     ):
         verdict = "looks_thorough"
         rec = "Coverage looks complete; dedupe_reports then wrap up."
@@ -322,6 +410,7 @@ def _coverage_gaps_impl(agent_id: str) -> dict[str, Any]:
         pending_count > 5
         or unrun_count >= 6
         or len(surface_gaps) >= 2
+        or len(untested_high_risk) >= 2
         or (mapped_n >= 5 and ratio < 0.3)
     ):
         verdict = "shallow"
@@ -340,9 +429,15 @@ def _coverage_gaps_impl(agent_id: str) -> dict[str, Any]:
         "mapped_endpoint_count": mapped_n,
         "untested_endpoints": untested_endpoints,
         "untested_endpoint_count": untested_n,
+        "untested_high_risk": untested_high_risk,
         "endpoint_coverage_ratio": ratio,
         "thoroughness": verdict,
-        "recommendation": rec,
+        "recommendation": (
+            f"{rec} Test the high-risk endpoints still untested first: "
+            + ", ".join(f"{r['method']} {r['endpoint']}" for r in untested_high_risk)
+            if untested_high_risk
+            else rec
+        ),
     }
 
 
@@ -360,10 +455,17 @@ async def coverage_gaps(ctx: RunContextWrapper) -> str:
     abuse, upload bypass, injection on mapped params, stored/second-order).
     Any surface gap blocks a ``looks_thorough`` verdict.
 
+    ``untested_high_risk`` lists mapped endpoints with a strong risk signal
+    (object id/IDOR, auth/admin, SSRF/traversal, upload, money/PII) that were
+    never tested. Any high-risk endpoint left untested blocks ``looks_thorough``
+    regardless of the overall coverage ratio — so cheap static routes can't pad
+    the ratio while the endpoints that actually matter go unprobed.
+
     Returns JSON with ``pending_by_type``, ``key_tools_not_run``,
     ``surface_gaps``, ``findings_filed``, ``mapped_endpoint_count``,
     ``untested_endpoints`` (capped at 25), ``untested_endpoint_count``,
-    ``endpoint_coverage_ratio``, ``thoroughness``, and a ``recommendation``.
+    ``untested_high_risk``, ``endpoint_coverage_ratio``, ``thoroughness``, and a
+    ``recommendation``.
     """
     agent_id = "mcp"
     if isinstance(ctx.context, dict):

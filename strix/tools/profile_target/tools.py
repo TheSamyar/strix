@@ -63,6 +63,16 @@ _SIGNATURES: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
         "graphql": (("body", "/graphql"), ("body", "__typename")),
         "rest": (("body", "/api/"),),
     },
+    "ai": {
+        "llm": (
+            ("body", "openai"),
+            ("body", "anthropic"),
+            ("body", "/chat/completions"),
+            ("body", "langchain"),
+            ("body", "assistant"),
+            ("body", "/v1/messages"),
+        ),
+    },
     "auth": {
         "jwt": (("header", "authorization: bearer"), ("body", "Bearer "), ("body", "eyJ")),
         "session_cookie": (
@@ -91,7 +101,7 @@ _SIGNATURES: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
         "shopify": (("header", "x-shopify"), ("body", "cdn.shopify.com")),
     },
 }
-_MULTI = frozenset({"baas", "api", "auth", "cdn_waf", "cloud"})  # can have several
+_MULTI = frozenset({"baas", "api", "auth", "cdn_waf", "cloud", "ai"})  # can have several
 _SINGLE = frozenset({"framework", "cms"})  # first match wins
 
 

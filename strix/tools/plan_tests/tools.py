@@ -63,6 +63,41 @@ _BASELINE: tuple[dict[str, Any], ...] = (
         "skills": ["ssrf"],
         "priority": "medium",
     },
+    {
+        "area": "Injection (SQLi / NoSQLi / command / SSTI)",
+        "why": "Any param that reaches a query/shell/template; the highest-impact class.",
+        "tools": ["injection_fuzz", "deep_fuzz"],
+        "skills": ["sql_injection", "nosql_injection", "ssti"],
+        "priority": "high",
+    },
+    {
+        "area": "XSS (reflected / stored / DOM)",
+        "why": "User input echoed into HTML/JS; stored variants pivot to account takeover.",
+        "tools": ["stored_probe"],
+        "skills": ["xss"],
+        "priority": "high",
+    },
+    {
+        "area": "Mass assignment / over-posting",
+        "why": "Create/update endpoints accept fields the UI never sends (role/is_admin).",
+        "tools": ["mass_assignment_probe"],
+        "skills": ["mass_assignment"],
+        "priority": "high",
+    },
+    {
+        "area": "Open redirect",
+        "why": "redirect/next/return_to params without an allowlist enable phishing/token theft.",
+        "tools": ["redirect_probe"],
+        "skills": ["open_redirect"],
+        "priority": "medium",
+    },
+    {
+        "area": "Business-logic abuse",
+        "why": "Quantity/price/state-machine flaws no scanner catches; reason about the workflow.",
+        "tools": [],
+        "skills": ["business_logic", "race_conditions"],
+        "priority": "medium",
+    },
 )
 
 # profile signal -> extra recommendation.
@@ -121,6 +156,16 @@ _AUTH_RULES: dict[str, dict[str, Any]] = {
         "priority": "medium",
     },
 }
+# profile signal -> AI/LLM-specific recommendation.
+_AI_RULES: dict[str, dict[str, Any]] = {
+    "llm": {
+        "area": "Prompt injection + LLM abuse",
+        "why": "Direct/indirect prompt injection, tool/function abuse, and MCP tool poisoning.",
+        "tools": ["prompt_injection_probe", "mcp_tool_poisoning_audit"],
+        "skills": ["llm_prompt_injection", "ai_ml_security"],
+        "priority": "high",
+    },
+}
 # framework -> skill pack that exists in the repo.
 _FRAMEWORK_SKILL = {
     "nextjs": "nextjs",
@@ -141,6 +186,7 @@ def _build_plan(profile: dict[str, Any]) -> list[dict[str, Any]]:
     plan.extend(_BAAS_RULES[b] for b in _as_list(profile.get("baas")) if b in _BAAS_RULES)
     plan.extend(_API_RULES[a] for a in _as_list(profile.get("api")) if a in _API_RULES)
     plan.extend(_AUTH_RULES[a] for a in _as_list(profile.get("auth")) if a in _AUTH_RULES)
+    plan.extend(_AI_RULES[a] for a in _as_list(profile.get("ai")) if a in _AI_RULES)
     framework = profile.get("framework")
     if isinstance(framework, str) and framework in _FRAMEWORK_SKILL:
         plan.append(

@@ -141,6 +141,8 @@ def test_surface_gaps_flag_untested_deep_classes() -> None:
         "stored_probe",
         "ssrf_probe",
         "lfi_probe",
+        "csrf_probe",  # authed writes → CSRF demanded
+        "mass_assignment_probe",  # write endpoints with params → over-posting demanded
     }
     assert _surface_gaps(ran) == []
     _reset_surface()
