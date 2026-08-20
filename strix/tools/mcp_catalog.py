@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from strix.config.settings import force_max_depth
+
 
 SEARCH_LIMIT = 25
 LOAD_EXTRA_CAP = 20
@@ -75,7 +77,7 @@ def apply_load_tool(names: list[str], known_names: set[str]) -> tuple[list[str],
         if name in _ALWAYS_ADVERTISED or name in _extra_loaded:
             loaded.append(name)
             continue
-        if len(_extra_loaded) >= LOAD_EXTRA_CAP:
+        if not force_max_depth() and len(_extra_loaded) >= LOAD_EXTRA_CAP:
             errors.append(f"extra-tool cap ({LOAD_EXTRA_CAP}) reached; skipped {name}")
             continue
         _extra_loaded.add(name)

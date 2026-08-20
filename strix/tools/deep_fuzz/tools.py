@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlparse, urlunparse
 
 from agents import RunContextWrapper, function_tool
 
+from strix.config.settings import depth_cap
 from strix.tools.http_replay.tools import _replay_impl
 
 
@@ -226,14 +227,16 @@ def _deep_fuzz_impl(
     if not params:
         return {"success": False, "error": "params cannot be empty (names to fuzz)"}
     point = "body" if injection_point == "body" else "query"
-    budget = _Budget(max(20, max_requests))
+    # STRIX_MAX_DEPTH: fuzz more params and grant a bigger request budget.
+    plimit = depth_cap(20, 80)
+    budget = _Budget(max(depth_cap(20, 1500), max_requests))
     findings: list[dict[str, Any]] = []
-    for name in params[:20]:
+    for name in params[:plimit]:
         findings.extend(_fuzz_param(method, url, name, headers, body, point, budget, timeout))
     return {
         "success": True,
         "url": url,
-        "params_fuzzed": len(params[:20]),
+        "params_fuzzed": len(params[:plimit]),
         "requests_left": budget.left,
         "truncated": budget.left <= 0,
         "finding_count": len(findings),

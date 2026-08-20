@@ -32,7 +32,7 @@ def test_replay_truncates_and_returns_metadata(monkeypatch: pytest.MonkeyPatch) 
         captured["kwargs"] = kwargs
         return _FakeResponse()
 
-    monkeypatch.setattr(http_replay_tools.requests, "request", fake_request)
+    monkeypatch.setattr(http_replay_tools._http_session(), "request", fake_request)
 
     result = http_replay_tools._replay_impl(
         "get", "https://example.com", {"X-Test": "1"}, "hi", 15, allow_redirects=False
@@ -51,7 +51,7 @@ def test_replay_error_is_structured(monkeypatch: pytest.MonkeyPatch) -> None:
     def boom(*_args: Any, **_kwargs: Any) -> None:
         raise requests.ConnectTimeout("timed out")
 
-    monkeypatch.setattr(http_replay_tools.requests, "request", boom)
+    monkeypatch.setattr(http_replay_tools._http_session(), "request", boom)
 
     result = http_replay_tools._replay_impl(
         "GET", "https://example.com", None, None, 1, allow_redirects=False
@@ -64,7 +64,7 @@ async def test_tool_wrapper_returns_json(monkeypatch: pytest.MonkeyPatch) -> Non
     def fake_request(*_args: Any, **_kwargs: Any) -> _FakeResponse:
         return _FakeResponse()
 
-    monkeypatch.setattr(http_replay_tools.requests, "request", fake_request)
+    monkeypatch.setattr(http_replay_tools._http_session(), "request", fake_request)
     args = json.dumps({"method": "GET", "url": "https://example.com"})
     ctx = ToolContext(
         context={"agent_id": "mcp"},
@@ -89,7 +89,7 @@ def test_batch_baseline_and_variants_with_diff(monkeypatch: "pytest.MonkeyPatch"
         r.url = url
         return r
 
-    monkeypatch.setattr(http_replay_tools.requests, "request", fake_request)
+    monkeypatch.setattr(http_replay_tools._http_session(), "request", fake_request)
 
     result = http_replay_tools._batch_impl(
         "GET", "https://x/api/users/1", None, None, 15, False,
@@ -117,7 +117,7 @@ def test_batch_header_merge_and_cap(monkeypatch: "pytest.MonkeyPatch") -> None:
         r.url = url
         return r
 
-    monkeypatch.setattr(http_replay_tools.requests, "request", fake_request)
+    monkeypatch.setattr(http_replay_tools._http_session(), "request", fake_request)
 
     over = [{"headers": {"Authorization": f"Bearer t{i}"}} for i in range(60)]
     result = http_replay_tools._batch_impl(

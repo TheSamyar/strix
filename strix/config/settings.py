@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Literal
 
 from pydantic import AliasChoices, Field
@@ -11,6 +12,26 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 DEFAULT_MAX_TURNS = 500
+
+# When ``STRIX_MAX_DEPTH`` is truthy, the tool runs "check everything" mode: the
+# CLI is pinned to deep scan-mode (no persisted downgrade) and the MCP server
+# advertises every host tool with no on-demand load cap. Set once in the env to
+# make maximum coverage the permanent default for both entry points.
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def force_max_depth() -> bool:
+    """Return True when the global max-depth switch (``STRIX_MAX_DEPTH``) is set."""
+    return os.environ.get("STRIX_MAX_DEPTH", "").strip().lower() in _TRUTHY
+
+
+def depth_cap(normal: int, boosted: int) -> int:
+    """Return ``boosted`` when ``STRIX_MAX_DEPTH`` is set, otherwise ``normal``.
+
+    Used at per-tool coverage caps (params fuzzed, endpoints per pass, request
+    budgets) so one switch widens every bound instead of the defaults.
+    """
+    return boosted if force_max_depth() else normal
 
 _BASE_CONFIG = SettingsConfigDict(
     case_sensitive=False,

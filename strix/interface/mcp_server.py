@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from agents.tool_context import ToolContext
 
+from strix.config.settings import force_max_depth
 from strix.core.paths import runtime_state_dir
 from strix.interface.cli_args import get_version
 from strix.report.state import ReportState, get_global_report_state, set_global_report_state
@@ -63,6 +64,7 @@ from strix.tools.dedupe.tools import dedupe_reports
 from strix.tools.deep_fuzz.tools import deep_fuzz
 from strix.tools.default_creds.tools import default_creds
 from strix.tools.dep_confusion.tools import check_dependency_confusion
+from strix.tools.deserial_probe.tools import deserial_exploit
 from strix.tools.desync.tools import cache_deception_probe, request_smuggling_probe
 from strix.tools.diff_response.tools import diff_response
 from strix.tools.discovery.tools import content_discover, param_discover
@@ -153,8 +155,10 @@ from strix.tools.shell_session.tools import (
 )
 from strix.tools.signed_url.tools import signed_url_probe
 from strix.tools.sourcemap.tools import sourcemap_recover
+from strix.tools.sqli_dump.tools import sqli_dump
 from strix.tools.ssr_leak.tools import ssr_leak_scan
 from strix.tools.ssrf_probe.tools import ssrf_probe
+from strix.tools.ssti_rce.tools import ssti_rce
 from strix.tools.storage_probe.tools import storage_probe
 from strix.tools.stored_probe.tools import stored_probe
 from strix.tools.subdomain_takeover.tools import subdomain_takeover
@@ -325,6 +329,9 @@ _HOST_TOOLS: tuple[FunctionTool, ...] = (
     authz_matrix,
     stored_probe,
     injection_fuzz,
+    deserial_exploit,
+    ssti_rce,
+    sqli_dump,
     ssrf_probe,
     xxe_probe,
     lfi_probe,
@@ -463,6 +470,10 @@ def _clip_desc(text: str) -> str:
 
 
 def mcp_tool_descriptors() -> list[dict[str, Any]]:
+    # STRIX_MAX_DEPTH: advertise every host tool up front instead of the small
+    # core + on-demand set, so the agent can reach all 130 probes without having
+    # to search_tools/load_tool first.
+    advertise_all = force_max_depth()
     advertised = advertised_host_names()
     tools = [
         {
@@ -494,7 +505,7 @@ def mcp_tool_descriptors() -> list[dict[str, Any]]:
             "inputSchema": tool.params_json_schema,
         }
         for tool in _HOST_TOOLS
-        if tool.name in advertised
+        if advertise_all or tool.name in advertised
     )
     return tools
 

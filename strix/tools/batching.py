@@ -8,7 +8,10 @@ path is untouched; batch mode just loops it.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
+
+from strix.config.settings import depth_cap
 
 
 if TYPE_CHECKING:
@@ -27,8 +30,16 @@ def url_batch(
     Each result is the impl's own dict with the ``url`` echoed in. Anything over
     ``cap`` is reported in ``dropped`` rather than silently skipped.
     """
+    cap = depth_cap(cap, cap * 10)  # STRIX_MAX_DEPTH: process 10x more URLs per call
     trimmed = [u for u in urls if u and u.strip()][:cap]
-    results = [{"url": u, **impl(u, timeout)} for u in trimmed]
+    # These are independent passive per-URL probes (no timing oracle), so run them
+    # concurrently over a bounded pool — I/O-bound, so wall-clock drops ~Nx.
+    if len(trimmed) > 1:
+        workers = min(len(trimmed), depth_cap(8, 24))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(lambda u: {"url": u, **impl(u, timeout)}, trimmed))
+    else:
+        results = [{"url": u, **impl(u, timeout)} for u in trimmed]
     out: dict[str, Any] = {"success": True, "results": results, "count": len(results)}
     over = len([u for u in urls if u and u.strip()]) - len(trimmed)
     if over > 0:

@@ -281,6 +281,9 @@ ignore = [
 "strix/tools/notes/tools.py" = ["PLC0415", "TC002"]
 "strix/tools/finish/tool.py" = ["PLC0415", "TC002"]
 "strix/tools/reporting/tool.py" = ["PLC0415", "TC002"]
+# Blind-SQLi extraction engine: building parameterised SQL strings is the tool's
+# entire purpose, so S608 (string-based query construction) is expected here.
+"strix/tools/sqli_dump/tools.py" = ["S608"]
 "strix/tools/**/*.py" = [
     "ARG001", # Unused function argument (tools may have unused args for interface consistency)
 ]

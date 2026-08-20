@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from strix.config import apply_config_override
-from strix.config.settings import DEFAULT_MAX_TURNS
+from strix.config.settings import DEFAULT_MAX_TURNS, force_max_depth
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.interface.scan_setup import attach_workspace_mount, build_targets_info
 from strix.interface.update_check import self_update
@@ -256,6 +256,11 @@ Examples:
     )
 
     args = parser.parse_args()
+    if force_max_depth():  # STRIX_MAX_DEPTH pins the deepest scan mode for every run
+        args.scan_mode = "deep"
+        # Raise the per-agent turn floor so deep scans aren't force-stopped early
+        # (keeps a higher user-supplied value).
+        args.max_turns = max(args.max_turns, 1500)
     # Startup-resolved state lives alongside the parsed flags. The full schema
     # is established here so downstream code reads attributes directly.
     args.needs_setup = False
@@ -415,5 +420,5 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
     if state.get("diff_scope"):
         args.diff_scope = state.get("diff_scope")
     persisted_scan_mode = state.get("scan_mode")
-    if persisted_scan_mode and args.scan_mode == "deep":
+    if persisted_scan_mode and args.scan_mode == "deep" and not force_max_depth():
         args.scan_mode = persisted_scan_mode

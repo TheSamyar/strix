@@ -5,11 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 import time
+from http import cookiejar
 from typing import Any
 
 import requests
 from agents import RunContextWrapper, function_tool
+from requests.adapters import HTTPAdapter
 
 
 logger = logging.getLogger(__name__)
@@ -17,6 +20,27 @@ logger = logging.getLogger(__name__)
 _BODY_CAP_CHARS = 20_000
 _VARIANT_BODY_CAP_CHARS = 4_000
 _MAX_VARIANTS = 50
+
+# Shared connection pool: every probe hammers the same host, so keep-alive reuse
+# removes a TCP+TLS handshake per request — the single biggest speedup in deep
+# mode. Cookies are blocked so replay stays stateless (probes never contaminate
+# each other), matching the pre-pool per-request behavior.
+_session: requests.Session | None = None
+_session_lock = threading.Lock()
+
+
+def _http_session() -> requests.Session:
+    global _session  # noqa: PLW0603 (lazily built once, guarded by a lock)
+    if _session is None:
+        with _session_lock:
+            if _session is None:
+                sess = requests.Session()
+                sess.cookies.set_policy(cookiejar.DefaultCookiePolicy(allowed_domains=[]))
+                adapter = HTTPAdapter(pool_connections=32, pool_maxsize=64, max_retries=0)
+                sess.mount("http://", adapter)
+                sess.mount("https://", adapter)
+                _session = sess
+    return _session
 
 
 def _replay_impl(
@@ -29,7 +53,7 @@ def _replay_impl(
 ) -> dict[str, Any]:
     started = time.monotonic()
     try:
-        resp = requests.request(
+        resp = _http_session().request(
             method.upper(),
             url,
             headers=headers or None,

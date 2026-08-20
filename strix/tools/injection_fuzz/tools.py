@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from agents import RunContextWrapper, function_tool
 
+from strix.config.settings import depth_cap
 from strix.tools.http_replay.tools import _replay_impl
 
 
@@ -157,14 +158,15 @@ def _injection_fuzz_impl(
     if not params:
         return {"success": False, "error": "params cannot be empty (names to fuzz)"}
     point = "body" if injection_point == "body" else "query"
+    limit = depth_cap(15, 60)  # STRIX_MAX_DEPTH: fuzz more params per call
     findings: list[dict[str, Any]] = []
-    for name in params[:15]:
+    for name in params[:limit]:
         findings.extend(_fuzz_param(method, url, name, headers, body, point, oast_domain, timeout))
     confirmed = [f for f in findings if f["severity"] != "unconfirmed"]
     return {
         "success": True,
         "url": url,
-        "params_fuzzed": len(params[:15]),
+        "params_fuzzed": len(params[:limit]),
         "finding_count": len(confirmed),
         "possible_injection": bool(confirmed),
         "findings": findings,
